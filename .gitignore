@@ -54,6 +54,7 @@ Thumbs.db
 
 # Testing
 /coverage
+/tests/.tmp/
 
 # Playwright
 test-results/
