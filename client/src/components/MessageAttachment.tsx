@@ -2,7 +2,7 @@ import React from 'react';
 import fileService from '../services/fileService';
 import type { MessageAttachmentProps } from '../types';
 
-function MessageAttachment({ attachment }: MessageAttachmentProps): JSX.Element | null {
+function MessageAttachment({ attachment, resolveDownloadUrl }: MessageAttachmentProps): JSX.Element | null {
   if (!attachment) return null;
 
   const isImage = fileService.isImage(attachment.mimetype);
@@ -15,14 +15,20 @@ function MessageAttachment({ attachment }: MessageAttachmentProps): JSX.Element 
 
     try {
       let blobUrl: string;
+      let revokeAfterUse = false;
 
       // If decryptedUrl is available (already decrypted by parent), use it
       if (attachment.decryptedUrl) {
         blobUrl = attachment.decryptedUrl;
+      } else if (resolveDownloadUrl) {
+        const resolved = await resolveDownloadUrl(attachment);
+        blobUrl = resolved.url;
+        revokeAfterUse = resolved.revokeAfterUse;
       } else {
         // Otherwise download and decrypt now
         const blob = await fileService.downloadEncryptedFile(attachment.url);
         blobUrl = URL.createObjectURL(blob);
+        revokeAfterUse = true;
       }
 
       // Create download link
@@ -34,7 +40,7 @@ function MessageAttachment({ attachment }: MessageAttachmentProps): JSX.Element 
       document.body.removeChild(a);
 
       // Only revoke if we created it (not if it came from parent)
-      if (!attachment.decryptedUrl) {
+      if (revokeAfterUse) {
         URL.revokeObjectURL(blobUrl);
       }
     } catch (error: any) {

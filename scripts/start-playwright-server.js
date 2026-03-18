@@ -1,11 +1,11 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const workspaceRoot = path.resolve(__dirname, '..');
-const runtimeDir = path.join(workspaceRoot, 'tests', '.tmp', 'playwright');
+const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-messenger-playwright-'));
 const uploadDir = path.join(runtimeDir, 'uploads');
 
-fs.rmSync(runtimeDir, { recursive: true, force: true });
 fs.mkdirSync(uploadDir, { recursive: true });
 
 process.env.NODE_ENV = 'test';
