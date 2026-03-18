@@ -46,12 +46,18 @@ function RoomPage({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState<boolean>(false);
   const [fingerprint, setFingerprint] = useState<string>('');
   const [serverUrl, setServerUrl] = useState<string>('');
-  const [uploadingFile, setUploadingFile] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const prevMessagesLengthRef = useRef<number>(0);
   const userHasScrolledRef = useRef<boolean>(false);
+  const attachmentUrlsRef = useRef<Set<string>>(new Set());
+
+  const releaseAttachmentUrls = (): void => {
+    for (const url of attachmentUrlsRef.current) {
+      URL.revokeObjectURL(url);
+    }
+    attachmentUrlsRef.current.clear();
+  };
 
   // Decrypt an attachment and return a blob URL
   const decryptAttachment = async (attachment: EncryptedAttachmentData): Promise<string | null> => {
@@ -72,7 +78,9 @@ function RoomPage({
       );
 
       // Create blob URL for display
-      return URL.createObjectURL(decrypted.blob);
+      const decryptedUrl = URL.createObjectURL(decrypted.blob);
+      attachmentUrlsRef.current.add(decryptedUrl);
+      return decryptedUrl;
     } catch (error) {
       console.error('Failed to decrypt attachment:', error);
       return null;
@@ -124,6 +132,8 @@ function RoomPage({
           } as MessageWithAttachment;
         })
       );
+
+      releaseAttachmentUrls();
       setMessages(decrypted);
     });
 
@@ -184,6 +194,7 @@ function RoomPage({
     });
 
     return () => {
+      releaseAttachmentUrls();
       socket.off('room-data');
       socket.off('new-encrypted-message');
       socket.off('user-typing');
@@ -259,10 +270,6 @@ function RoomPage({
 
   const handleTyping = (): void => {
     socket.emit('typing', { roomId });
-
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
   };
 
   // Handle encrypted file upload
@@ -556,7 +563,6 @@ function RoomPage({
           <FileUpload
             roomId={roomId}
             onFileUploaded={handleFileUploaded}
-            disabled={uploadingFile}
             encryptFile={handleEncryptFile}
           />
           <div className="input-container">

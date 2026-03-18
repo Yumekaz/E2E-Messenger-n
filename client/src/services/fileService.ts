@@ -178,14 +178,6 @@ class FileService {
   }
 
   /**
-   * Get file metadata
-   */
-  async getFile(fileId: number): Promise<{ attachment: Attachment }> {
-    const response = await authService.authenticatedFetch(`${API_BASE}/${fileId}`);
-    return response.json();
-  }
-
-  /**
    * Get all files in a room
    */
   async getRoomFiles(roomId: string): Promise<{ attachments: Attachment[] }> {
