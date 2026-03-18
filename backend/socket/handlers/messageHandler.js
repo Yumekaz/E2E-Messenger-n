@@ -6,9 +6,10 @@
 const crypto = require('crypto');
 const db = require('../../database/db');
 const logger = require('../../utils/logger');
+const { serializeAttachmentRecord } = require('../../utils/messagePayloads');
 
 function createMessageHandler(io, socket, state) {
-  const { users, rooms, socketToRooms } = state;
+  const { users } = state;
 
   /**
    * Send encrypted message
@@ -40,29 +41,7 @@ function createMessageHandler(io, socket, state) {
     if (attachmentId) {
       const dbAttachment = db.getAttachment(attachmentId);
       if (dbAttachment) {
-        // Helper to infer mimetype from filename (prefer original name)
-        const nameToCheck = dbAttachment.original_name || dbAttachment.filename;
-        const ext = nameToCheck.split('.').pop().toLowerCase();
-        const mimeMap = {
-          'jpg': 'image/jpeg',
-          'jpeg': 'image/jpeg',
-          'png': 'image/png',
-          'gif': 'image/gif',
-          'webp': 'image/webp'
-        };
-        const inferredMime = mimeMap[ext];
-
-        attachment = {
-          id: dbAttachment.id,
-          filename: dbAttachment.filename,
-          url: `/api/files/${dbAttachment.id}`,
-          // Use original type, or inferred type, or stored mimetype
-          mimetype: dbAttachment.original_type || inferredMime || dbAttachment.mimetype,
-          size: dbAttachment.size,
-          encrypted: !!dbAttachment.encrypted,
-          iv: dbAttachment.iv,
-          metadata: dbAttachment.metadata
-        };
+        attachment = serializeAttachmentRecord(dbAttachment);
       }
     }
 

@@ -3,37 +3,14 @@
  * Handles real-time room events
  */
 
-const crypto = require('crypto');
 const db = require('../../database/db');
 const logger = require('../../utils/logger');
+const roomService = require('../../services/roomService');
+const { serializeSocketMessage } = require('../../utils/messagePayloads');
+const { buildMemberSnapshot, emitMembersUpdate } = require('../../utils/roomMembers');
 
 function createRoomHandler(io, socket, state) {
-  const { users, rooms, joinRequests, socketToRooms } = state;
-
-  /**
-   * Generate secure room code
-   */
-  function generateRoomCode() {
-    return crypto.randomBytes(3).toString('hex').toUpperCase();
-  }
-
-  /**
-   * Build a room member list and key map from persistent storage
-   */
-  function buildMemberSnapshot(roomId) {
-    const dbMembers = db.getRoomMembers(roomId);
-    const memberKeys = {};
-    const memberList = [];
-
-    for (const member of dbMembers) {
-      memberList.push(member.username);
-      if (member.public_key) {
-        memberKeys[member.username] = member.public_key;
-      }
-    }
-
-    return { memberKeys, memberList };
-  }
+  const { users, joinRequests, socketToRooms } = state;
 
   /**
    * Create room
@@ -45,31 +22,13 @@ function createRoomHandler(io, socket, state) {
       return;
     }
 
-    const roomId = `room_${state.roomCounter++}_${Date.now()}`;
-    const roomCode = generateRoomCode();
-
     // Determine room type based on user authentication
     const roomType = user.id ? 'authenticated' : 'legacy';
+    const room = roomService.create(user.id, user.username, roomType);
 
-    const room = {
-      owner: user.username,
-      ownerId: user.id,
-      ownerSocketId: socket.id,
-      code: roomCode,
-      roomType: roomType,
-      members: new Map([[user.username, user.publicKey]]),
-      encryptedMessages: [],
-    };
-
-    rooms.set(roomId, room);
-    socket.join(roomId);
-    socketToRooms.get(socket.id).add(roomId);
-
-    // Persist to database with room type
-    db.createRoom(roomId, roomCode, user.id, user.username, roomType);
-
-    socket.emit('room-created', { roomId, roomCode, roomType });
-    logger.info('Room created', { roomId, roomCode, owner: user.username, roomType });
+    socket.join(room.roomId);
+    socketToRooms.get(socket.id).add(room.roomId);
+    socket.emit('room-created', room);
   });
 
   /**
@@ -178,7 +137,7 @@ function createRoomHandler(io, socket, state) {
       requesterSocket.join(request.roomId);
       socketToRooms.get(request.socketId)?.add(request.roomId);
 
-      const { memberKeys, memberList } = buildMemberSnapshot(request.roomId);
+      const { memberKeys } = buildMemberSnapshot(request.roomId);
 
       requesterSocket.emit('join-approved', {
         roomId: request.roomId,
@@ -192,10 +151,7 @@ function createRoomHandler(io, socket, state) {
         publicKey: request.publicKey,
       });
 
-      io.to(request.roomId).emit('members-update', {
-        members: memberList,
-        memberKeys,
-      });
+      emitMembersUpdate(io, request.roomId);
 
       logger.info('Join approved', { username: request.username, roomId: request.roomId });
     }
@@ -267,52 +223,14 @@ function createRoomHandler(io, socket, state) {
     socket.join(roomId);
     socketToRooms.get(socket.id)?.add(roomId);
 
-    const { memberKeys, memberList } = buildMemberSnapshot(roomId);
+    const { memberKeys, members } = buildMemberSnapshot(roomId);
 
     // Get messages from database
     const dbMessages = db.getRoomMessages(roomId);
-    const encryptedMessages = dbMessages.map(msg => {
-      const message = {
-        id: msg.message_id,
-        senderUsername: msg.sender_username,
-        encryptedData: msg.encrypted_data,
-        iv: msg.iv,
-        timestamp: new Date(msg.created_at).getTime(),
-      };
-
-      if (msg.attachment_id) {
-        // Helper to infer mimetype from filename (prefer original name)
-        const nameToCheck = msg.original_name || msg.filename;
-        const ext = nameToCheck.split('.').pop().toLowerCase();
-        const mimeMap = {
-          'jpg': 'image/jpeg',
-          'jpeg': 'image/jpeg',
-          'png': 'image/png',
-          'gif': 'image/gif',
-          'webp': 'image/webp'
-        };
-        const inferredMime = mimeMap[ext];
-
-        message.attachment = {
-          id: msg.attachment_id,
-          filename: msg.filename,
-          url: `/api/files/${msg.attachment_id}`, // Use API route for retrieval
-          // Use original type, or inferred type, or stored mimetype
-          mimetype: msg.original_type || inferredMime || msg.mimetype,
-          size: msg.size,
-          encrypted: !!msg.encrypted,
-          iv: msg.attachment_iv,
-          metadata: msg.metadata
-        };
-
-        // If encrypted, use original type for display if available
-        // (Handled above in mimetype assignment)
-      }
-      return message;
-    });
+    const encryptedMessages = dbMessages.map(serializeSocketMessage);
 
     socket.emit('room-data', {
-      members: memberList,
+      members,
       memberKeys,
       encryptedMessages,
     });
@@ -340,12 +258,7 @@ function createRoomHandler(io, socket, state) {
     // Notify others
     io.to(roomId).emit('member-left', { username: user.username });
 
-    const { memberKeys, memberList } = buildMemberSnapshot(roomId);
-
-    io.to(roomId).emit('members-update', {
-      members: memberList,
-      memberKeys,
-    });
+    emitMembersUpdate(io, roomId);
 
     // Delete room if owner leaves
     if (dbRoom.owner_username === user.username) {

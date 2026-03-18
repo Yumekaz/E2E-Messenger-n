@@ -9,6 +9,7 @@ const { authenticateSocket } = require('../middleware/auth');
 const authService = require('../services/authService');
 const createMessageHandler = require('./handlers/messageHandler');
 const createRoomHandler = require('./handlers/roomHandler');
+const { emitMembersUpdate } = require('../utils/roomMembers');
 
 /**
  * Shared state between socket handlers
@@ -17,10 +18,8 @@ const state = {
   users: new Map(),           // socketId -> { username, publicKey, id }
   usernames: new Set(),       // Set of active usernames
   userToSocket: new Map(),    // username -> socketId (for looking up owner by username)
-  rooms: new Map(),           // roomId -> room object
   joinRequests: new Map(),    // requestId -> request object
   socketToRooms: new Map(),   // socketId -> Set of roomIds
-  roomCounter: 0,
   requestCounter: 0,
 };
 
@@ -117,28 +116,22 @@ function setupSocketHandlers(io) {
       // Leave all rooms
       const userRooms = state.socketToRooms.get(socket.id) || new Set();
       for (const roomId of userRooms) {
-        const room = state.rooms.get(roomId);
-        if (room) {
-          room.members.delete(user.username);
+        const room = db.getRoomById(roomId);
+        if (!room) {
+          continue;
+        }
+
+        if (room.owner_username === user.username) {
+          db.deleteRoom(roomId);
+          io.to(roomId).emit('room-closed');
+          logger.info('Room closed (owner disconnect)', { roomId });
+          continue;
+        }
+
+        if (db.isRoomMember(roomId, user.username)) {
+          db.removeRoomMember(roomId, user.username);
           io.to(roomId).emit('member-left', { username: user.username });
-
-          const memberKeys = {};
-          room.members.forEach((key, name) => {
-            memberKeys[name] = key;
-          });
-
-          io.to(roomId).emit('members-update', {
-            members: Array.from(room.members.keys()),
-            memberKeys,
-          });
-
-          // Close room if owner disconnects
-          if (room.ownerSocketId === socket.id) {
-            state.rooms.delete(roomId);
-            db.deleteRoom(roomId);
-            io.to(roomId).emit('room-closed');
-            logger.info('Room closed (owner disconnect)', { roomId });
-          }
+          emitMembersUpdate(io, roomId);
         }
       }
 

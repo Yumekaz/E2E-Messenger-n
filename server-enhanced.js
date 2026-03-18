@@ -17,7 +17,6 @@ const https = require('https');
 const fs = require('fs');
 const { Server } = require('socket.io');
 const path = require('path');
-const os = require('os');
 const cors = require('cors');
 
 // SSL certificate paths
@@ -33,6 +32,7 @@ require('dotenv').config();
 const config = require('./backend/config');
 const logger = require('./backend/utils/logger');
 const db = require('./backend/database/db');
+const { buildNetworkInfo, getPreferredLocalIp } = require('./backend/utils/networkInfo');
 
 // Import middleware
 const requestLogger = require('./backend/middleware/requestLogger');
@@ -112,54 +112,7 @@ app.get('/api/health', (req, res) => {
 
 // Network info for QR codes (must be accessible without rate limiting)
 app.get('/api/network-info', (req, res) => {
-  const interfaces = os.networkInterfaces();
-  let localIP = 'localhost';
-
-  // Priority order: prefer Mobile Hotspot, then Wi-Fi and Ethernet over virtual adapters
-  // "Local Area Connection*" is Windows Mobile Hotspot adapter name
-  const priorityOrder = ['Local Area Connection*', 'Wi-Fi', 'Ethernet', 'en0', 'eth0', 'wlan0'];
-  const skipPatterns = ['vEthernet', 'WSL', 'Hyper-V', 'VirtualBox', 'VMware', 'Docker', 'Loopback'];
-
-  // First pass: look for priority interfaces
-  for (const priority of priorityOrder) {
-    for (const name of Object.keys(interfaces)) {
-      if (name.toLowerCase().includes(priority.toLowerCase())) {
-        for (const iface of interfaces[name]) {
-          if (iface.family === 'IPv4' && !iface.internal) {
-            localIP = iface.address;
-            break;
-          }
-        }
-      }
-      if (localIP !== 'localhost') break;
-    }
-    if (localIP !== 'localhost') break;
-  }
-
-  // Second pass: if still localhost, find any non-virtual interface
-  if (localIP === 'localhost') {
-    for (const name of Object.keys(interfaces)) {
-      // Skip virtual adapters
-      if (skipPatterns.some(pattern => name.includes(pattern))) continue;
-
-      for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          localIP = iface.address;
-          break;
-        }
-      }
-      if (localIP !== 'localhost') break;
-    }
-  }
-
-  res.json({
-    url: `https://${localIP}:${HTTPS_PORT}`,
-    httpUrl: `http://${localIP}:${config.port}`,
-    httpsUrl: `https://${localIP}:${HTTPS_PORT}`,
-    ip: localIP,
-    port: config.port,
-    httpsPort: HTTPS_PORT,
-  });
+  res.json(buildNetworkInfo(config.port, HTTPS_PORT, Boolean(httpsServer)));
 });
 
 // Rate limiting for API routes (except file downloads)
@@ -208,16 +161,7 @@ async function startServer() {
     setupSocketHandlers(io);
 
     // Get local IP for display
-    const interfaces = os.networkInterfaces();
-    let localIP = 'localhost';
-    for (const name of Object.keys(interfaces)) {
-      for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          localIP = iface.address;
-          break;
-        }
-      }
-    }
+    const localIP = getPreferredLocalIp();
 
     // Start HTTP server
     server.listen(config.port, () => {

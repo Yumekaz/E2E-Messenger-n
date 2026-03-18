@@ -4,6 +4,7 @@
  */
 
 const roomService = require('../services/roomService');
+const { serializeApiMessage } = require('../utils/messagePayloads');
 
 class RoomController {
   /**
@@ -126,21 +127,7 @@ class RoomController {
       const messages = roomService.getMessages(roomId, req.user.username, limit);
 
       res.json({
-        messages: messages.map(m => ({
-          messageId: m.message_id,
-          senderUsername: m.sender_username,
-          encryptedData: m.encrypted_data,
-          iv: m.iv,
-          state: m.state,
-          createdAt: m.created_at,
-          attachment: m.attachment_id ? {
-            id: m.attachment_id,
-            filename: m.filename,
-            url: `/api/files/${m.attachment_id}`,
-            mimetype: m.mimetype,
-            size: m.size,
-          } : null,
-        })),
+        messages: messages.map(serializeApiMessage),
       });
     } catch (error) {
       next(error);
