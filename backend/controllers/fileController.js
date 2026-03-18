@@ -8,6 +8,7 @@ const path = require('path');
 const config = require('../config');
 const fileService = require('../services/fileService');
 const roomService = require('../services/roomService');
+const logger = require('../utils/logger');
 const { ValidationError, AuthorizationError, NotFoundError } = require('../utils/errors');
 
 class FileController {
@@ -98,15 +99,15 @@ class FileController {
 
       const stream = fs.createReadStream(absolutePath);
       stream.on('error', (err) => {
-        console.error('File stream error:', err);
-        try { fs.appendFileSync('debug_error.log', `STREAM ERROR: ${err.message}\n`); } catch (e) { }
+        logger.error('File stream error', {
+          attachmentId: attachment.id,
+          filepath: absolutePath,
+          error: err.message,
+        });
         if (!res.headersSent) res.status(500).json({ message: 'Error streaming file' });
       });
       stream.pipe(res);
     } catch (error) {
-      try {
-        fs.appendFileSync('debug_error.log', `GETFILE ERROR: ${error.message}\n${error.stack}\n`);
-      } catch (e) { }
       next(error);
     }
   }

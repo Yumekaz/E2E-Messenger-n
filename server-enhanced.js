@@ -186,8 +186,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
 app.use('/api/files', fileRoutes);
 
-// Serve frontend for all other routes (SPA support)
-app.get('*', (req, res) => {
+// Serve frontend for all non-API routes (SPA support)
+app.get(/^\/(?!api(?:\/|$)).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public_build', 'index.html'));
 });
 

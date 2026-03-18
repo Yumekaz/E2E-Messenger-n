@@ -12,7 +12,8 @@ class RoomController {
    */
   async create(req, res, next) {
     try {
-      const room = roomService.create(req.user.userId, req.user.username);
+      const roomType = req.user.userId ? 'authenticated' : 'legacy';
+      const room = roomService.create(req.user.userId, req.user.username, roomType);
 
       res.status(201).json({
         message: 'Room created',
@@ -20,6 +21,7 @@ class RoomController {
           roomId: room.roomId,
           roomCode: room.roomCode,
           isOwner: true,
+          roomType,
         },
       });
     } catch (error) {
@@ -134,7 +136,7 @@ class RoomController {
           attachment: m.attachment_id ? {
             id: m.attachment_id,
             filename: m.filename,
-            url: `/uploads/${m.filepath}`,
+            url: `/api/files/${m.attachment_id}`,
             mimetype: m.mimetype,
             size: m.size,
           } : null,
