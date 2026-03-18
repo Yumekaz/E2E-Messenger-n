@@ -50,41 +50,28 @@ function RoomPage({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevMessagesLengthRef = useRef<number>(0);
   const userHasScrolledRef = useRef<boolean>(false);
-  const attachmentUrlsRef = useRef<Set<string>>(new Set());
 
-  const releaseAttachmentUrls = (): void => {
-    for (const url of attachmentUrlsRef.current) {
-      URL.revokeObjectURL(url);
-    }
-    attachmentUrlsRef.current.clear();
-  };
-
-  // Decrypt an attachment and return a blob URL
-  const decryptAttachment = async (attachment: EncryptedAttachmentData): Promise<string | null> => {
+  const resolveAttachmentDownload = async (
+    attachment: EncryptedAttachmentData
+  ): Promise<{ url: string; revokeAfterUse: boolean }> => {
     if (!attachment.encrypted || !attachment.iv || !attachment.metadata) {
-      // Not encrypted, return original URL
-      return attachment.url;
+      return {
+        url: attachment.url,
+        revokeAfterUse: false,
+      };
     }
 
-    try {
-      // Download encrypted file
-      const encryptedBlob = await fileService.downloadEncryptedFile(attachment.url);
-      
-      // Decrypt using room key
-      const decrypted = await encryption.decryptFile(
-        encryptedBlob,
-        attachment.iv,
-        attachment.metadata
-      );
+    const encryptedBlob = await fileService.downloadEncryptedFile(attachment.url);
+    const decrypted = await encryption.decryptFile(
+      encryptedBlob,
+      attachment.iv,
+      attachment.metadata
+    );
 
-      // Create blob URL for display
-      const decryptedUrl = URL.createObjectURL(decrypted.blob);
-      attachmentUrlsRef.current.add(decryptedUrl);
-      return decryptedUrl;
-    } catch (error) {
-      console.error('Failed to decrypt attachment:', error);
-      return null;
-    }
+    return {
+      url: URL.createObjectURL(decrypted.blob),
+      revokeAfterUse: true,
+    };
   };
 
   useEffect(() => {
@@ -112,16 +99,11 @@ function RoomPage({
         encryptedMessages.map(async (msg: EncryptedMessage) => {
           const text = await encryption.decrypt(msg.encryptedData, msg.iv);
           
-          // Handle attachment decryption if present
+          // Preserve attachment metadata; decrypt on demand when the user downloads it.
           let decryptedAttachment: EncryptedAttachmentData | undefined;
           if ((msg as any).attachment) {
             const att = (msg as any).attachment as EncryptedAttachmentData;
-            if (att.encrypted) {
-              const decryptedUrl = await decryptAttachment(att);
-              decryptedAttachment = { ...att, decryptedUrl: decryptedUrl || undefined };
-            } else {
-              decryptedAttachment = att;
-            }
+            decryptedAttachment = att;
           }
 
           return {
@@ -132,8 +114,6 @@ function RoomPage({
           } as MessageWithAttachment;
         })
       );
-
-      releaseAttachmentUrls();
       setMessages(decrypted);
     });
 
@@ -141,16 +121,11 @@ function RoomPage({
     socket.on('new-encrypted-message', async (msg: EncryptedMessage) => {
       const text = await encryption.decrypt(msg.encryptedData, msg.iv);
       
-      // Handle attachment decryption if present
+      // Preserve attachment metadata; decrypt on demand when the user downloads it.
       let decryptedAttachment: EncryptedAttachmentData | undefined;
       if ((msg as any).attachment) {
         const att = (msg as any).attachment as EncryptedAttachmentData;
-        if (att.encrypted) {
-          const decryptedUrl = await decryptAttachment(att);
-          decryptedAttachment = { ...att, decryptedUrl: decryptedUrl || undefined };
-        } else {
-          decryptedAttachment = att;
-        }
+        decryptedAttachment = att;
       }
 
       setMessages(prev => [...prev, {
@@ -194,7 +169,6 @@ function RoomPage({
     });
 
     return () => {
-      releaseAttachmentUrls();
       socket.off('room-data');
       socket.off('new-encrypted-message');
       socket.off('user-typing');
@@ -513,6 +487,7 @@ function RoomPage({
                     <MessageAttachment
                       key={(msg as MessageWithAttachment).attachment!.id || (msg as MessageWithAttachment).attachment!.filename}
                       attachment={(msg as MessageWithAttachment).attachment!}
+                      resolveDownloadUrl={resolveAttachmentDownload}
                     />
                   )}
                   {!isSystemMessage(msg) && (msg as DecryptedMessage).decrypted && (

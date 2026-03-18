@@ -238,6 +238,7 @@ export interface FileUploadProps {
 
 export interface MessageAttachmentProps {
   attachment: Attachment;
+  resolveDownloadUrl?: (attachment: Attachment) => Promise<{ url: string; revokeAfterUse: boolean }>;
 }
 
 export interface ToastProps {
