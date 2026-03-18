@@ -108,14 +108,13 @@ describe('Error Handling', () => {
 describe('Rate Limiting', () => {
   it('should include rate limit headers', async () => {
     const res = await request(API_URL)
-      .get('/api/health');
-
-    const authRes = await request(API_URL)
       .post('/api/auth/login')
       .send({ email: 'test@test.com', password: 'wrong' });
 
-    expect(res.status).toBe(200);
-    expect(authRes.status).toBeDefined();
+    expect([401, 429]).toContain(res.status);
+    expect(res.headers['x-ratelimit-limit']).toBeDefined();
+    expect(res.headers['x-ratelimit-remaining']).toBeDefined();
+    expect(res.headers['x-ratelimit-reset']).toBeDefined();
   });
 
   it('should rate limit auth endpoints after many attempts', async () => {

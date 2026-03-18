@@ -31,6 +31,7 @@ module.exports = async () => {
       ...process.env,
       NODE_ENV: 'test',
       PORT: String(port),
+      DISABLE_HTTPS: 'true',
       DATABASE_PATH: databasePath,
       UPLOAD_DIR: uploadDir,
     },
