@@ -8,13 +8,31 @@ const db = require('../../database/db');
 const logger = require('../../utils/logger');
 
 function createRoomHandler(io, socket, state) {
-  const { users, usernames, rooms, joinRequests, socketToRooms } = state;
+  const { users, rooms, joinRequests, socketToRooms } = state;
 
   /**
    * Generate secure room code
    */
   function generateRoomCode() {
     return crypto.randomBytes(3).toString('hex').toUpperCase();
+  }
+
+  /**
+   * Build a room member list and key map from persistent storage
+   */
+  function buildMemberSnapshot(roomId) {
+    const dbMembers = db.getRoomMembers(roomId);
+    const memberKeys = {};
+    const memberList = [];
+
+    for (const member of dbMembers) {
+      memberList.push(member.username);
+      if (member.public_key) {
+        memberKeys[member.username] = member.public_key;
+      }
+    }
+
+    return { memberKeys, memberList };
   }
 
   /**
@@ -58,10 +76,7 @@ function createRoomHandler(io, socket, state) {
    * Request to join room
    */
   socket.on('request-join', ({ roomCode }) => {
-    console.log('[DEBUG request-join] roomCode:', roomCode);
-
     const user = users.get(socket.id);
-    console.log('[DEBUG request-join] user:', user?.username || 'NOT FOUND');
 
     if (!user) {
       socket.emit('error', { message: 'Not registered' });
@@ -70,7 +85,6 @@ function createRoomHandler(io, socket, state) {
 
     // Look up room from DATABASE (not in-memory) for persistence
     const dbRoom = db.getRoomByCode(roomCode);
-    console.log('[DEBUG request-join] dbRoom:', dbRoom ? `found - owner: ${dbRoom.owner_username}` : 'NOT FOUND');
 
     if (!dbRoom) {
       socket.emit('error', { message: 'Room not found' });
@@ -113,9 +127,7 @@ function createRoomHandler(io, socket, state) {
     });
 
     // Look up owner's current socket by username (not stale stored ID)
-    console.log('[DEBUG request-join] userToSocket keys:', Array.from(state.userToSocket.keys()));
     const ownerSocketId = state.userToSocket.get(dbRoom.owner_username);
-    console.log('[DEBUG request-join] ownerSocketId:', ownerSocketId || 'NOT FOUND');
 
     logger.info('Join request received', {
       username: user.username,
@@ -132,11 +144,9 @@ function createRoomHandler(io, socket, state) {
         publicKey: user.publicKey,
         roomId: dbRoom.room_id,
       });
-      console.log('[DEBUG request-join] Emitted join-request to', ownerSocketId);
       logger.debug('Join request sent to owner', { ownerSocketId });
     } else {
       // Owner not online
-      console.log('[DEBUG request-join] Owner not online!');
       socket.emit('error', { message: 'Room owner is not online' });
       joinRequests.delete(requestId);
     }
@@ -168,18 +178,7 @@ function createRoomHandler(io, socket, state) {
       requesterSocket.join(request.roomId);
       socketToRooms.get(request.socketId)?.add(request.roomId);
 
-      // Get all room members from database to build memberKeys
-      const dbMembers = db.getRoomMembers(request.roomId);
-      const memberKeys = {};
-      const memberList = [];
-
-      for (const member of dbMembers) {
-        memberList.push(member.username);
-        const memberUser = db.getUserByUsername(member.username);
-        if (memberUser?.public_key) {
-          memberKeys[member.username] = memberUser.public_key;
-        }
-      }
+      const { memberKeys, memberList } = buildMemberSnapshot(request.roomId);
 
       requesterSocket.emit('join-approved', {
         roomId: request.roomId,
@@ -268,18 +267,7 @@ function createRoomHandler(io, socket, state) {
     socket.join(roomId);
     socketToRooms.get(socket.id)?.add(roomId);
 
-    // Get room members and their public keys from database
-    const dbMembers = db.getRoomMembers(roomId);
-    const memberKeys = {};
-    const memberList = [];
-
-    for (const member of dbMembers) {
-      memberList.push(member.username);
-      const memberUser = db.getUserByUsername(member.username);
-      if (memberUser?.public_key) {
-        memberKeys[member.username] = memberUser.public_key;
-      }
-    }
+    const { memberKeys, memberList } = buildMemberSnapshot(roomId);
 
     // Get messages from database
     const dbMessages = db.getRoomMessages(roomId);
@@ -352,18 +340,7 @@ function createRoomHandler(io, socket, state) {
     // Notify others
     io.to(roomId).emit('member-left', { username: user.username });
 
-    // Get updated members list from database
-    const dbMembers = db.getRoomMembers(roomId);
-    const memberKeys = {};
-    const memberList = [];
-
-    for (const member of dbMembers) {
-      memberList.push(member.username);
-      const memberUser = db.getUserByUsername(member.username);
-      if (memberUser?.public_key) {
-        memberKeys[member.username] = memberUser.public_key;
-      }
-    }
+    const { memberKeys, memberList } = buildMemberSnapshot(roomId);
 
     io.to(roomId).emit('members-update', {
       members: memberList,

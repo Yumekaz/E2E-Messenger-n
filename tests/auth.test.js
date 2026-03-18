@@ -4,38 +4,43 @@
  */
 
 const request = require('supertest');
+const { API_URL } = require('./helpers/api');
+const { buildIdentity } = require('./helpers/identity');
 
-// We need to create a test app instance
-// This is a simplified version - in production you'd have a proper test setup
 describe('Authentication API', () => {
-  const API_URL = 'http://localhost:3000';
-  
   let accessToken;
   let refreshToken;
-  const testUser = {
-    email: `test${Date.now()}@example.com`,
-    username: `testuser${Date.now()}`,
-    password: 'TestPassword123',
-  };
+  let seededUser;
+
+  beforeAll(async () => {
+    seededUser = buildIdentity('authseed');
+
+    const res = await request(API_URL)
+      .post('/api/auth/register')
+      .send(seededUser)
+      .expect('Content-Type', /json/);
+
+    expect(res.status).toBe(201);
+
+    accessToken = res.body.accessToken;
+    refreshToken = res.body.refreshToken;
+  });
 
   describe('POST /api/auth/register', () => {
     it('should register a new user', async () => {
+      const testUser = buildIdentity('register');
+
       const res = await request(API_URL)
         .post('/api/auth/register')
         .send(testUser)
         .expect('Content-Type', /json/);
 
-      // Should succeed or fail gracefully
-      if (res.status === 201) {
-        expect(res.body).toHaveProperty('accessToken');
-        expect(res.body).toHaveProperty('refreshToken');
-        expect(res.body).toHaveProperty('user');
-        expect(res.body.user.email).toBe(testUser.email);
-        expect(res.body.user).not.toHaveProperty('password_hash');
-        
-        accessToken = res.body.accessToken;
-        refreshToken = res.body.refreshToken;
-      }
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty('accessToken');
+      expect(res.body).toHaveProperty('refreshToken');
+      expect(res.body).toHaveProperty('user');
+      expect(res.body.user.email).toBe(testUser.email);
+      expect(res.body.user).not.toHaveProperty('password_hash');
     });
 
     it('should reject registration with invalid email', async () => {
@@ -69,7 +74,7 @@ describe('Authentication API', () => {
         .post('/api/auth/register')
         .send({
           email: 'test@example.com',
-          username: 'ab', // too short
+          username: 'ab',
           password: 'TestPassword123',
         });
 
@@ -80,31 +85,25 @@ describe('Authentication API', () => {
 
   describe('POST /api/auth/login', () => {
     it('should login with valid credentials', async () => {
-      // Skip if registration didn't work
-      if (!accessToken) {
-        console.log('Skipping login test - registration failed');
-        return;
-      }
-
       const res = await request(API_URL)
         .post('/api/auth/login')
         .send({
-          email: testUser.email,
-          password: testUser.password,
-        });
+          email: seededUser.email,
+          password: seededUser.password,
+        })
+        .expect('Content-Type', /json/);
 
-      if (res.status === 200) {
-        expect(res.body).toHaveProperty('accessToken');
-        expect(res.body).toHaveProperty('refreshToken');
-        expect(res.body).toHaveProperty('user');
-      }
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('accessToken');
+      expect(res.body).toHaveProperty('refreshToken');
+      expect(res.body).toHaveProperty('user');
     });
 
     it('should reject login with wrong password', async () => {
       const res = await request(API_URL)
         .post('/api/auth/login')
         .send({
-          email: testUser.email,
+          email: seededUser.email,
           password: 'wrongpassword',
         });
 
@@ -127,19 +126,14 @@ describe('Authentication API', () => {
 
   describe('POST /api/auth/refresh', () => {
     it('should refresh access token', async () => {
-      if (!refreshToken) {
-        console.log('Skipping refresh test - no refresh token');
-        return;
-      }
-
       const res = await request(API_URL)
         .post('/api/auth/refresh')
-        .send({ refreshToken });
+        .send({ refreshToken })
+        .expect('Content-Type', /json/);
 
-      if (res.status === 200) {
-        expect(res.body).toHaveProperty('accessToken');
-        expect(res.body).toHaveProperty('refreshToken');
-      }
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('accessToken');
+      expect(res.body).toHaveProperty('refreshToken');
     });
 
     it('should reject invalid refresh token', async () => {
@@ -153,20 +147,15 @@ describe('Authentication API', () => {
 
   describe('GET /api/auth/me', () => {
     it('should return current user profile', async () => {
-      if (!accessToken) {
-        console.log('Skipping profile test - no access token');
-        return;
-      }
-
       const res = await request(API_URL)
         .get('/api/auth/me')
-        .set('Authorization', `Bearer ${accessToken}`);
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect('Content-Type', /json/);
 
-      if (res.status === 200) {
-        expect(res.body).toHaveProperty('user');
-        expect(res.body.user).toHaveProperty('username');
-        expect(res.body.user).not.toHaveProperty('password_hash');
-      }
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('user');
+      expect(res.body.user).toHaveProperty('username', seededUser.username);
+      expect(res.body.user).not.toHaveProperty('password_hash');
     });
 
     it('should reject request without token', async () => {
@@ -187,10 +176,7 @@ describe('Authentication API', () => {
 });
 
 describe('Rate Limiting', () => {
-  const API_URL = 'http://localhost:3000';
-
   it('should rate limit excessive login attempts', async () => {
-    // Make multiple rapid requests
     const promises = [];
     for (let i = 0; i < 10; i++) {
       promises.push(
@@ -204,12 +190,10 @@ describe('Rate Limiting', () => {
     }
 
     const results = await Promise.all(promises);
-    
-    // At least one should be rate limited (429) if rate limiting is working
-    const rateLimited = results.some(r => r.status === 429);
-    const hasRateLimitHeaders = results.some(r => r.headers['x-ratelimit-limit']);
-    
-    // Either rate limited or has rate limit headers
+
+    const rateLimited = results.some((res) => res.status === 429);
+    const hasRateLimitHeaders = results.some((res) => res.headers['x-ratelimit-limit']);
+
     expect(rateLimited || hasRateLimitHeaders).toBe(true);
   });
 });

@@ -1,6 +1,9 @@
 module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.js'],
+  modulePaths: ['<rootDir>/client/node_modules'],
+  globalSetup: '<rootDir>/tests/globalSetup.js',
+  globalTeardown: '<rootDir>/tests/globalTeardown.js',
   collectCoverageFrom: [
     'backend/**/*.js',
     '!backend/config/**',

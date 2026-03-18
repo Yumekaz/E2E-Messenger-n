@@ -23,7 +23,8 @@ const cors = require('cors');
 // SSL certificate paths
 const SSL_KEY_PATH = path.join(__dirname, 'ssl', 'key.pem');
 const SSL_CERT_PATH = path.join(__dirname, 'ssl', 'cert.pem');
-const HTTPS_PORT = 3443;
+const HTTPS_PORT = parseInt(process.env.HTTPS_PORT, 10) || 3443;
+const DISABLE_HTTPS = process.env.DISABLE_HTTPS === 'true';
 
 // Load environment variables first
 require('dotenv').config();
@@ -51,7 +52,7 @@ const server = http.createServer(app);
 
 // Create HTTPS server if certificates exist
 let httpsServer = null;
-const hasSSL = fs.existsSync(SSL_KEY_PATH) && fs.existsSync(SSL_CERT_PATH);
+const hasSSL = !DISABLE_HTTPS && fs.existsSync(SSL_KEY_PATH) && fs.existsSync(SSL_CERT_PATH);
 if (hasSSL) {
   try {
     const sslOptions = {
@@ -186,8 +187,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
 app.use('/api/files', fileRoutes);
 
-// Serve frontend for all other routes (SPA support)
-app.get('*', (req, res) => {
+// Serve frontend for all non-API routes (SPA support)
+app.get(/^\/(?!api(?:\/|$)).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public_build', 'index.html'));
 });
 

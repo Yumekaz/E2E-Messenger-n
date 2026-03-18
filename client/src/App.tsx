@@ -45,6 +45,20 @@ function App(): JSX.Element {
   // Refs
   const encryptionRef = useRef<RoomEncryption | null>(null);
   const pendingRoomCodeRef = useRef<string | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const emitRegistration = (nextUsername: string): boolean => {
+    const publicKey = encryptionRef.current?.publicKeyExported;
+    if (!nextUsername || !publicKey) {
+      return false;
+    }
+
+    socket.emit('register', {
+      username: nextUsername,
+      publicKey,
+    });
+    return true;
+  };
 
   // Check for room code in URL
   useEffect(() => {
@@ -90,29 +104,26 @@ function App(): JSX.Element {
 
         // Register with socket after reconnection
         const registerOnConnect = () => {
-          if (encryptionRef.current && encryptionRef.current.publicKeyExported) {
-            socket.emit('register', {
-              username: user.username,
-              publicKey: encryptionRef.current.publicKeyExported
-            });
-          }
+          emitRegistration(user.username);
           socket.off('connect', registerOnConnect);
         };
 
         // Wait for both socket connection and encryption to be ready
         const tryRegister = () => {
-          if (socket.connected && encryptionRef.current?.publicKeyExported) {
-            socket.emit('register', {
-              username: user.username,
-              publicKey: encryptionRef.current.publicKeyExported
-            });
+          if (socket.connected && emitRegistration(user.username)) {
+            return;
           } else if (!socket.connected) {
             socket.on('connect', registerOnConnect);
           }
         };
 
         // Small delay to ensure encryption is ready
-        setTimeout(tryRegister, 500);
+        const registerTimer = setTimeout(tryRegister, 500);
+
+        return () => {
+          clearTimeout(registerTimer);
+          socket.off('connect', registerOnConnect);
+        };
       }
     } else if (useNewAuth) {
       setCurrentPage('auth');
@@ -128,12 +139,7 @@ function App(): JSX.Element {
       const user = authService.getUser();
       const currentUsername = user?.username || username;
 
-      if (currentUsername && encryptionRef.current?.publicKeyExported) {
-        socket.emit('register', {
-          username: currentUsername,
-          publicKey: encryptionRef.current.publicKeyExported
-        });
-      }
+      emitRegistration(currentUsername);
     };
 
     socket.on('connect', handleConnect);
@@ -183,7 +189,6 @@ function App(): JSX.Element {
     });
 
     socket.on('join-request', ({ requestId, username: requesterName, publicKey, roomId }: JoinRequest & { roomId: string }) => {
-      console.log('[DEBUG frontend] Received join-request:', { requestId, requesterName, roomId });
       setJoinRequests(prev => [...prev, { requestId, username: requesterName, publicKey, roomId }]);
       showToast(`${requesterName} wants to join`, 'info');
     });
@@ -233,11 +238,8 @@ function App(): JSX.Element {
 
     // Wait for socket to reconnect before registering
     const registerAfterConnect = () => {
-      if (encryptionStatus === 'ready' && encryptionRef.current && encryptionRef.current.publicKeyExported) {
-        socket.emit('register', {
-          username: user.username,
-          publicKey: encryptionRef.current.publicKeyExported
-        });
+      if (encryptionStatus === 'ready') {
+        emitRegistration(user.username);
       }
       socket.off('connect', registerAfterConnect);
     };
@@ -260,15 +262,12 @@ function App(): JSX.Element {
 
   // Legacy username registration
   const handleRegister = async (name: string): Promise<void> => {
-    if (encryptionStatus !== 'ready' || !encryptionRef.current || !encryptionRef.current.publicKeyExported) {
+    if (encryptionStatus !== 'ready') {
       showToast('Encryption initializing...', 'info');
       return;
     }
 
-    socket.emit('register', {
-      username: name,
-      publicKey: encryptionRef.current.publicKeyExported
-    });
+    emitRegistration(name);
   };
 
   // Room handlers
@@ -307,9 +306,24 @@ function App(): JSX.Element {
   };
 
   const showToast = (message: string, type: ToastProps['type']): void => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimeoutRef.current = null;
+    }, 3500);
   };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Toggle auth mode
   const toggleAuthMode = (): void => {

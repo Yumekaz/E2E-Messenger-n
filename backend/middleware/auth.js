@@ -33,11 +33,6 @@ function authenticateToken(req, res, next) {
 
     next();
   } catch (error) {
-    // DEBUG LOGGING
-    console.error('[AUTH DEBUG] Token verification failed:', {
-      token: token.substring(0, 20) + '...',
-      error: error.message
-    });
     next(new AuthenticationError('Invalid or expired token'));
   }
 }

@@ -167,7 +167,6 @@ function runQuery(sql, params = []) {
     saveDatabase();
   }
 
-  console.log('[DB DEBUG] Run Query:', { sql: sql.substring(0, 50), params, lastId, changes });
   return { changes, lastInsertRowid: lastId };
 }
 

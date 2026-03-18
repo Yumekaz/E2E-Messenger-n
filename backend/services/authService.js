@@ -140,9 +140,7 @@ class AuthService {
    */
   verifyAccessToken(token) {
     try {
-      // DEBUG: Allowing expired tokens to fix debugging session issues
-      const decoded = jwt.verify(token, config.jwt.secret, { ignoreExpiration: true });
-      return decoded;
+      return jwt.verify(token, config.jwt.secret);
     } catch (error) {
       throw new AuthenticationError('Invalid or expired token');
     }

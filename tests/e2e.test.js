@@ -1,20 +1,14 @@
 /**
  * End-to-End Test Suite
- * 
- * Tests complete user flows: Registration → Room Creation → Messaging
- * 
- * To run with Playwright (if installed):
- *   npx playwright test tests/e2e/
- * 
- * For now, this uses supertest + socket.io-client for API-level E2E tests
+ *
+ * Tests complete user flows: Registration -> Room Creation -> Messaging
  */
 
 const request = require('supertest');
 const { io } = require('socket.io-client');
+const { API_URL } = require('./helpers/api');
+const { buildIdentity } = require('./helpers/identity');
 
-const API_URL = 'http://localhost:3000';
-
-// Helper to create socket connection with auth
 function createAuthenticatedSocket(token) {
   return io(API_URL, {
     autoConnect: false,
@@ -22,7 +16,6 @@ function createAuthenticatedSocket(token) {
   });
 }
 
-// Helper to wait for socket event
 function waitForEvent(socket, event, timeout = 5000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -36,188 +29,170 @@ function waitForEvent(socket, event, timeout = 5000) {
   });
 }
 
+function waitForSocketConnection(socket, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('Connection timeout'));
+    }, timeout);
+
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+
+    socket.once('connect_error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
 describe('E2E: Complete User Flow', () => {
-  let userA = { email: '', token: '', socket: null };
-  let userB = { email: '', token: '', socket: null };
+  const userA = { email: '', token: '', username: '', socket: null };
+  const userB = { email: '', token: '', username: '', socket: null };
   let roomCode = '';
   let roomId = '';
 
-  // Generate unique emails for this test run
   beforeAll(() => {
-    const timestamp = Date.now();
-    userA.email = `e2e_user_a_${timestamp}@test.com`;
-    userB.email = `e2e_user_b_${timestamp}@test.com`;
+    userA.email = buildIdentity('e2ea', 'test.com').email;
+    userB.email = buildIdentity('e2eb', 'test.com').email;
   });
 
   afterAll(() => {
-    // Cleanup sockets
     if (userA.socket) userA.socket.disconnect();
     if (userB.socket) userB.socket.disconnect();
   });
 
   describe('Step 1: User Registration', () => {
     it('should register User A', async () => {
+      const identity = buildIdentity('usera', 'test.com');
       const res = await request(API_URL)
         .post('/api/auth/register')
         .send({
-          email: userA.email,
-          username: `userA_${Date.now()}`,
+          email: userA.email || identity.email,
+          username: identity.username,
           password: 'SecurePass123',
         });
 
-      if (res.status === 201) {
-        expect(res.body).toHaveProperty('accessToken');
-        expect(res.body).toHaveProperty('user');
-        userA.token = res.body.accessToken;
-        userA.username = res.body.user.username;
-      }
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty('accessToken');
+      expect(res.body).toHaveProperty('user');
+
+      userA.token = res.body.accessToken;
+      userA.username = res.body.user.username;
     });
 
     it('should register User B', async () => {
+      const identity = buildIdentity('userb', 'test.com');
       const res = await request(API_URL)
         .post('/api/auth/register')
         .send({
-          email: userB.email,
-          username: `userB_${Date.now()}`,
+          email: userB.email || identity.email,
+          username: identity.username,
           password: 'SecurePass456',
         });
 
-      if (res.status === 201) {
-        expect(res.body).toHaveProperty('accessToken');
-        userB.token = res.body.accessToken;
-        userB.username = res.body.user.username;
-      }
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty('accessToken');
+
+      userB.token = res.body.accessToken;
+      userB.username = res.body.user.username;
     });
   });
 
   describe('Step 2: Socket Connection', () => {
     it('User A should connect with auth token', async () => {
-      if (!userA.token) {
-        console.log('Skipping - no token');
-        return;
-      }
+      expect(userA.token).toBeTruthy();
 
       userA.socket = createAuthenticatedSocket(userA.token);
       userA.socket.connect();
 
-      await new Promise((resolve, reject) => {
-        userA.socket.on('connect', resolve);
-        userA.socket.on('connect_error', reject);
-        setTimeout(() => reject(new Error('Connection timeout')), 5000);
-      });
-
+      await waitForSocketConnection(userA.socket);
       expect(userA.socket.connected).toBe(true);
     });
 
     it('User B should connect with auth token', async () => {
-      if (!userB.token) {
-        console.log('Skipping - no token');
-        return;
-      }
+      expect(userB.token).toBeTruthy();
 
       userB.socket = createAuthenticatedSocket(userB.token);
       userB.socket.connect();
 
-      await new Promise((resolve, reject) => {
-        userB.socket.on('connect', resolve);
-        userB.socket.on('connect_error', reject);
-        setTimeout(() => reject(new Error('Connection timeout')), 5000);
-      });
-
+      await waitForSocketConnection(userB.socket);
       expect(userB.socket.connected).toBe(true);
     });
   });
 
   describe('Step 3: Room Creation', () => {
     it('User A should create a room via API', async () => {
-      if (!userA.token) {
-        console.log('Skipping - no token');
-        return;
-      }
-
       const res = await request(API_URL)
         .post('/api/rooms')
         .set('Authorization', `Bearer ${userA.token}`);
 
-      if (res.status === 201) {
-        expect(res.body).toHaveProperty('room');
-        expect(res.body.room).toHaveProperty('roomCode');
-        expect(res.body.room).toHaveProperty('roomId');
-        roomCode = res.body.room.roomCode;
-        roomId = res.body.room.roomId;
-      }
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty('room');
+      expect(res.body.room).toHaveProperty('roomCode');
+      expect(res.body.room).toHaveProperty('roomId');
+
+      roomCode = res.body.room.roomCode;
+      roomId = res.body.room.roomId;
     });
 
     it('Room code should be 6 characters', () => {
-      if (roomCode) {
-        expect(roomCode).toMatch(/^[A-Z0-9]{6}$/);
-      }
+      expect(roomCode).toMatch(/^[A-Z0-9]{6}$/);
     });
   });
 
   describe('Step 4: Room Joining', () => {
     it('User A should register with socket and public key', async () => {
-      if (!userA.socket || !userA.username) {
-        console.log('Skipping - no socket');
-        return;
-      }
+      expect(userA.socket).toBeTruthy();
+      expect(userA.username).toBeTruthy();
 
       const registerPromise = waitForEvent(userA.socket, 'registered');
-      
+
       userA.socket.emit('register', {
         username: userA.username,
-        publicKey: 'mock-public-key-a-' + Date.now(),
+        publicKey: `mock-public-key-a-${Date.now()}`,
       });
 
       const result = await registerPromise;
-      expect(result).toHaveProperty('username');
+      expect(result).toHaveProperty('username', userA.username);
     });
 
     it('User A should join their room', async () => {
-      if (!userA.socket || !roomId) {
-        console.log('Skipping - no socket or room');
-        return;
-      }
+      expect(userA.socket).toBeTruthy();
+      expect(roomId).toBeTruthy();
 
       const roomDataPromise = waitForEvent(userA.socket, 'room-data');
-      
       userA.socket.emit('join-room', { roomId });
 
       const roomData = await roomDataPromise;
       expect(roomData).toHaveProperty('members');
+      expect(roomData.members).toContain(userA.username);
     });
   });
 
   describe('Step 5: Message Exchange', () => {
     it('User A should send an encrypted message', async () => {
-      if (!userA.socket || !roomId) {
-        console.log('Skipping - no socket or room');
-        return;
-      }
+      expect(userA.socket).toBeTruthy();
 
-      // Send message
+      const messagePromise = waitForEvent(userA.socket, 'new-encrypted-message');
+      const encryptedData = `mock-encrypted-data-${Date.now()}`;
+
       userA.socket.emit('send-encrypted-message', {
         roomId,
-        encryptedData: 'mock-encrypted-data-' + Date.now(),
+        encryptedData,
         iv: 'mock-iv-12345678',
         senderUsername: userA.username,
       });
 
-      // Small delay to ensure message is processed
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // If we get here without error, message was sent
-      expect(true).toBe(true);
+      const message = await messagePromise;
+      expect(message).toHaveProperty('senderUsername', userA.username);
+      expect(message).toHaveProperty('encryptedData', encryptedData);
     });
   });
 
   describe('Step 6: Cleanup', () => {
     it('User A should be able to delete the room', async () => {
-      if (!userA.token || !roomId) {
-        console.log('Skipping - no token or room');
-        return;
-      }
-
       const res = await request(API_URL)
         .delete(`/api/rooms/${roomId}`)
         .set('Authorization', `Bearer ${userA.token}`);
@@ -236,42 +211,34 @@ describe('E2E: Security Flow', () => {
   });
 
   it('should not allow access to other users rooms', async () => {
-    // Register a new user
-    const timestamp = Date.now();
-    const regRes = await request(API_URL)
+    const ownerRes = await request(API_URL)
       .post('/api/auth/register')
       .send({
-        email: `security_test_${timestamp}@test.com`,
-        username: `sectest_${timestamp}`,
+        ...buildIdentity('sectest', 'test.com'),
         password: 'TestPass123',
       });
 
-    if (regRes.status !== 201) return;
+    expect(ownerRes.status).toBe(201);
 
-    // Create a room
     const roomRes = await request(API_URL)
       .post('/api/rooms')
-      .set('Authorization', `Bearer ${regRes.body.accessToken}`);
+      .set('Authorization', `Bearer ${ownerRes.body.accessToken}`);
 
-    if (roomRes.status !== 201) return;
+    expect(roomRes.status).toBe(201);
 
-    // Register another user
     const otherRes = await request(API_URL)
       .post('/api/auth/register')
       .send({
-        email: `other_${timestamp}@test.com`,
-        username: `other_${timestamp}`,
+        ...buildIdentity('other', 'test.com'),
         password: 'TestPass123',
       });
 
-    if (otherRes.status !== 201) return;
+    expect(otherRes.status).toBe(201);
 
-    // Try to access first user's room
     const accessRes = await request(API_URL)
       .get(`/api/rooms/${roomRes.body.room.roomId}/messages`)
       .set('Authorization', `Bearer ${otherRes.body.accessToken}`);
 
-    // Should be forbidden
     expect(accessRes.status).toBe(403);
   });
 });
@@ -281,36 +248,26 @@ describe('E2E: File Upload with Encryption', () => {
   let roomId = '';
 
   beforeAll(async () => {
-    const timestamp = Date.now();
     const res = await request(API_URL)
       .post('/api/auth/register')
       .send({
-        email: `filetest_${timestamp}@test.com`,
-        username: `filetest_${timestamp}`,
+        ...buildIdentity('filetest', 'test.com'),
         password: 'TestPass123',
       });
 
-    if (res.status === 201) {
-      authToken = res.body.accessToken;
+    expect(res.status).toBe(201);
+    authToken = res.body.accessToken;
 
-      const roomRes = await request(API_URL)
-        .post('/api/rooms')
-        .set('Authorization', `Bearer ${authToken}`);
+    const roomRes = await request(API_URL)
+      .post('/api/rooms')
+      .set('Authorization', `Bearer ${authToken}`);
 
-      if (roomRes.status === 201) {
-        roomId = roomRes.body.room.roomId;
-      }
-    }
+    expect(roomRes.status).toBe(201);
+    roomId = roomRes.body.room.roomId;
   });
 
   it('should upload an encrypted file', async () => {
-    if (!authToken || !roomId) {
-      console.log('Skipping - no auth or room');
-      return;
-    }
-
-    // Create a mock encrypted file
-    const mockEncryptedContent = Buffer.from('encrypted-file-content-' + Date.now());
+    const mockEncryptedContent = Buffer.from(`encrypted-file-content-${Date.now()}`);
 
     const res = await request(API_URL)
       .post('/api/files/upload')
@@ -324,32 +281,23 @@ describe('E2E: File Upload with Encryption', () => {
       .field('originalSize', '12345')
       .attach('file', mockEncryptedContent, 'encrypted.enc');
 
-    if (res.status === 201) {
-      expect(res.body).toHaveProperty('attachment');
-      expect(res.body.attachment.encrypted).toBe(true);
-      expect(res.body.attachment.iv).toBeDefined();
-    }
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty('attachment');
+    expect(res.body.attachment.encrypted).toBe(true);
+    expect(res.body.attachment.iv).toBeDefined();
   });
 
   it('should retrieve encrypted file metadata', async () => {
-    if (!authToken || !roomId) {
-      console.log('Skipping - no auth or room');
-      return;
-    }
-
     const res = await request(API_URL)
       .get(`/api/files/room/${roomId}`)
       .set('Authorization', `Bearer ${authToken}`);
 
-    if (res.status === 200) {
-      expect(res.body).toHaveProperty('attachments');
-      expect(Array.isArray(res.body.attachments)).toBe(true);
-      
-      // If there are encrypted files, verify they have encryption metadata
-      const encryptedFiles = res.body.attachments.filter(a => a.encrypted);
-      if (encryptedFiles.length > 0) {
-        expect(encryptedFiles[0].iv).toBeDefined();
-      }
-    }
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('attachments');
+    expect(Array.isArray(res.body.attachments)).toBe(true);
+
+    const encryptedFiles = res.body.attachments.filter((attachment) => attachment.encrypted);
+    expect(encryptedFiles.length).toBeGreaterThan(0);
+    expect(encryptedFiles[0].iv).toBeDefined();
   });
 });

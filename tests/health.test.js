@@ -4,8 +4,7 @@
  */
 
 const request = require('supertest');
-
-const API_URL = 'http://localhost:3000';
+const { API_URL } = require('./helpers/api');
 
 describe('Health API', () => {
   describe('GET /api/health', () => {
@@ -62,8 +61,8 @@ describe('Error Handling', () => {
         .post('/api/auth/register')
         .send({
           email: 'invalid-email',
-          username: 'a', // too short
-          password: '123', // too short
+          username: 'a',
+          password: '123',
         });
 
       expect(res.status).toBe(400);
@@ -109,26 +108,18 @@ describe('Error Handling', () => {
 describe('Rate Limiting', () => {
   it('should include rate limit headers', async () => {
     const res = await request(API_URL)
-      .get('/api/health');
-
-    // These headers should be present when rate limiting is enabled
-    const hasRateLimitHeaders = 
-      res.headers['x-ratelimit-limit'] !== undefined ||
-      res.headers['x-ratelimit-remaining'] !== undefined;
-
-    // Rate limiting might not affect health endpoint, but check auth endpoints
-    const authRes = await request(API_URL)
       .post('/api/auth/login')
       .send({ email: 'test@test.com', password: 'wrong' });
 
-    // Either rate limit headers exist or the status indicates rate limiting logic
-    expect(authRes.status).toBeDefined();
+    expect([401, 429]).toContain(res.status);
+    expect(res.headers['x-ratelimit-limit']).toBeDefined();
+    expect(res.headers['x-ratelimit-remaining']).toBeDefined();
+    expect(res.headers['x-ratelimit-reset']).toBeDefined();
   });
 
   it('should rate limit auth endpoints after many attempts', async () => {
     const attempts = [];
-    
-    // Make 10 rapid requests
+
     for (let i = 0; i < 10; i++) {
       attempts.push(
         request(API_URL)
@@ -141,14 +132,12 @@ describe('Rate Limiting', () => {
     }
 
     const results = await Promise.all(attempts);
-    
-    // Check if any request was rate limited (429) or has rate limit headers
-    const rateLimited = results.some(r => r.status === 429);
-    const hasHeaders = results.some(r => r.headers['x-ratelimit-limit']);
-    
-    // At minimum, requests should complete (either with 429 or 401)
-    const validStatuses = results.every(r => [401, 429].includes(r.status));
-    expect(validStatuses || hasHeaders).toBe(true);
+
+    const rateLimited = results.some((res) => res.status === 429);
+    const hasHeaders = results.some((res) => res.headers['x-ratelimit-limit']);
+    const validStatuses = results.every((res) => [401, 429].includes(res.status));
+
+    expect(validStatuses || hasHeaders || rateLimited).toBe(true);
   });
 });
 
@@ -162,11 +151,9 @@ describe('Input Sanitization', () => {
         password: 'TestPassword123',
       });
 
-    // Should either reject (400) or sanitize
     expect([400, 201]).toContain(res.status);
-    
+
     if (res.status === 201) {
-      // If accepted, username should be sanitized
       expect(res.body.user.username).not.toContain('<script>');
     }
   });
@@ -179,13 +166,12 @@ describe('Input Sanitization', () => {
         password: 'password',
       });
 
-    // Should fail validation or auth, not crash
     expect([400, 401]).toContain(res.status);
   });
 
   it('should handle very long input', async () => {
     const longString = 'a'.repeat(10000);
-    
+
     const res = await request(API_URL)
       .post('/api/auth/register')
       .send({
@@ -194,7 +180,6 @@ describe('Input Sanitization', () => {
         password: 'TestPassword123',
       });
 
-    // Should reject long usernames
     expect(res.status).toBe(400);
   });
 });
@@ -204,7 +189,6 @@ describe('CORS and Headers', () => {
     const res = await request(API_URL)
       .get('/api/health');
 
-    // Basic response should work
     expect(res.status).toBe(200);
   });
 
@@ -214,7 +198,6 @@ describe('CORS and Headers', () => {
       .set('Origin', 'http://localhost:5173')
       .set('Access-Control-Request-Method', 'POST');
 
-    // Should not return 404 or 500
     expect([200, 204]).toContain(res.status);
   });
 });
