@@ -210,6 +210,26 @@ describe('E2E: Security Flow', () => {
     expect(res.status).toBe(401);
   });
 
+  it('should surface invalid socket auth instead of silently downgrading it', async () => {
+    const staleSocket = createAuthenticatedSocket('invalid-token');
+    staleSocket.connect();
+
+    try {
+      await waitForSocketConnection(staleSocket);
+
+      const authExpiredPromise = waitForEvent(staleSocket, 'auth-expired');
+
+      staleSocket.emit('register', {
+        username: `stale_${Date.now()}`,
+        publicKey: `mock-public-key-${Date.now()}`,
+      });
+
+      await expect(authExpiredPromise).resolves.toBeUndefined();
+    } finally {
+      staleSocket.disconnect();
+    }
+  });
+
   it('should not allow access to other users rooms', async () => {
     const ownerRes = await request(API_URL)
       .post('/api/auth/register')

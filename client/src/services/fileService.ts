@@ -40,12 +40,28 @@ class FileService {
         resolve(token);
       };
 
+      const handleAuthExpired = () => {
+        cleanup();
+        reject(new Error('Session expired'));
+      };
+
+      const handleSocketError = ({ message }: { message: string }) => {
+        if (message === 'Not registered') {
+          cleanup();
+          reject(new Error('Secure session is not active'));
+        }
+      };
+
       const cleanup = () => {
         clearTimeout(timeout);
         socket.off('upload-token', handleToken);
+        socket.off('auth-expired', handleAuthExpired);
+        socket.off('error', handleSocketError);
       };
 
       socket.on('upload-token', handleToken);
+      socket.on('auth-expired', handleAuthExpired);
+      socket.on('error', handleSocketError);
       socket.emit('request-upload-token');
     });
   }

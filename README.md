@@ -1,6 +1,6 @@
-# 🔐 SecureChat - End-to-End Encrypted Messenger
+# SecureChat - Internet-Free Local Messenger
 
-A production-ready, real-time messaging application with **true end-to-end encryption**, **JWT authentication**, and **offline-first architecture**.
+Private group messaging over the **same Wi-Fi, hotspot, or LAN** with **end-to-end encryption**, **owner-approved room access**, and **no internet requirement**.
 
 ![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![Encryption](https://img.shields.io/badge/Encryption-AES--256--GCM-00d4aa)
@@ -23,16 +23,20 @@ A production-ready, real-time messaging application with **true end-to-end encry
 
 ## ✨ Features
 
-### 🔒 Advanced Security
-- **End-to-End Encryption** - AES-256-GCM + ECDH P-256 key exchange
-- **Secure File Sharing** - E2E encrypted file uploads (Images, PDFs)
-- **Zero-Knowledge** - Server stores only encrypted blobs
-- **JWT Authentication** - Access tokens (15min) + refresh tokens (7 days) with rotation
-- **Ephemeral Mode** - All data deleted when room owner leaves
+### Private local communication
+- **No internet required** - Devices talk over the same Wi-Fi, hotspot, or LAN
+- **Owner-approved rooms** - The room owner decides who can join
+- **Not discoverable outside the local network** - People off-network cannot see or request the room
 
-### 📱 Mobile & Offline Ready
-- **Offline-First** - Works on local network without internet
+### Encryption and access
+- **End-to-end encryption** - AES-256-GCM + ECDH P-256 key exchange
+- **Encrypted file sharing** - Files are encrypted before upload and shared inside the room
+- **JWT authentication** - Access tokens (15 min) + refresh tokens (7 days) with rotation
+- **Ephemeral rooms** - When the owner leaves, the room and its data are removed
+
+### Mobile and same-network access
 - **QR Code Joining** - Scan to join rooms instantly
+- **Multiple local join addresses** - If one LAN IP is wrong for a phone or laptop, the room shows fallback local addresses you can copy instead
 - **Self-Signed HTTPS** - Built-in HTTPS server for secure mobile access
 - **Mixed Mode** - Supports both Auth-based and Legacy (username-only) users
 
@@ -76,6 +80,22 @@ npm run start:legacy # Starts legacy server (No Auth, just E2E)
 |--------|-----|
 | 💻 PC | `http://localhost:3000` |
 | 📱 Phone | `https://YOUR_PC_IP:3443` |
+
+---
+
+## How It Works
+
+1. Connect both devices to the same Wi-Fi, hotspot, or LAN.
+2. Create a room on one device.
+3. Share the room code or QR code with people on that same network.
+4. Approve each join request from the room owner device.
+5. If a phone cannot join with the first QR link, try one of the alternate local addresses shown in the room details.
+
+## What This Does Not Do
+
+- It does **not** work across the public internet.
+- People outside your local network cannot discover or join your room.
+- `Offline` in this project means **no internet required**, not **no local network at all**.
 
 ---
 
@@ -144,7 +164,8 @@ e2e-messenger/
 1. **Message Pagination** - Load older messages on scroll
 2. **Read Receipts** - Show who has read messages
 3. **Push Notifications** - Web Push API for mobile
-4. **Desktop App** - Electron wrapper
+4. **Connection diagnostics** - Explain why a phone or laptop cannot join
+5. **Desktop App** - Electron wrapper
 
 ---
 
@@ -152,4 +173,4 @@ e2e-messenger/
 MIT License - free to use, modify, and distribute.
 
 ---
-Built with 🔐 for private, offline communication.
+Built for private, internet-free communication on the same local network.

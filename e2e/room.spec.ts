@@ -50,7 +50,9 @@ test.describe('Room & Messaging Flow', () => {
   test('should show encryption banner', async ({ page }) => {
     await registerAndEnterRoom(page, 'roombanner');
 
-    await expect(page.getByText('Messages and files are end-to-end encrypted')).toBeVisible();
+    await expect(
+      page.getByText(/messages and files are end-to-end encrypted/i)
+    ).toBeVisible();
   });
 
   test('should display QR code for mobile joining', async ({ page }) => {

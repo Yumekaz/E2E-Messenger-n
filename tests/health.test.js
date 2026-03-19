@@ -33,6 +33,12 @@ describe('Health API', () => {
       expect(res.body).toHaveProperty('url');
       expect(res.body).toHaveProperty('ip');
       expect(res.body).toHaveProperty('port');
+      expect(res.body).toHaveProperty('candidates');
+      expect(Array.isArray(res.body.candidates)).toBe(true);
+      expect(res.body.candidates.length).toBeGreaterThan(0);
+      expect(res.body.candidates[0]).toHaveProperty('ip');
+      expect(res.body.candidates[0]).toHaveProperty('url');
+      expect(res.body.candidates[0]).toHaveProperty('recommended');
     });
   });
 });

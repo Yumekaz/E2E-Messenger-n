@@ -4,6 +4,7 @@
  */
 
 import type { AuthUser, AuthResponse, LoginCredentials, RegisterCredentials } from '../types';
+import { setSocketAuthToken } from '../socket';
 
 const API_BASE = '/api/auth';
 
@@ -78,7 +79,7 @@ class AuthService {
     });
 
     if (!response.ok) {
-      this.logout();
+      this.clearSession();
       throw new Error('Session expired');
     }
 
@@ -173,6 +174,7 @@ class AuthService {
     this.refreshToken = refreshToken;
     localStorage.setItem('accessToken', accessToken);
     localStorage.setItem('refreshToken', refreshToken);
+    setSocketAuthToken(accessToken);
   }
 
   /**
@@ -193,6 +195,7 @@ class AuthService {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
+    setSocketAuthToken(null);
   }
 
   /**

@@ -1,24 +1,20 @@
-import React, { useState, useEffect, useRef, FormEvent } from 'react';
+import React, { useEffect, useRef, useState, FormEvent } from 'react';
 import socket from '../socket';
 import { QRCodeCanvas } from 'qrcode.react';
 import ConfirmModal from '../components/ConfirmModal';
 import FileUpload from '../components/FileUpload';
 import MessageAttachment from '../components/MessageAttachment';
 import fileService from '../services/fileService';
-import type { 
-  RoomPageProps, 
-  DecryptedMessage, 
-  SystemMessage, 
-  Message, 
+import '../styles/room.css';
+import type {
+  RoomPageProps,
+  DecryptedMessage,
+  SystemMessage,
+  Message,
   Attachment,
-  EncryptedMessage,
-  MemberJoinedPayload,
-  MemberLeftPayload,
-  MembersUpdatePayload,
-  RoomDataPayload,
+  EncryptedMessage
 } from '../types';
 
-// Extended attachment type with encryption
 interface EncryptedAttachmentData extends Attachment {
   encrypted?: boolean;
   iv?: string | null;
@@ -26,9 +22,18 @@ interface EncryptedAttachmentData extends Attachment {
   decryptedUrl?: string;
 }
 
-// Message with possible attachment
 interface MessageWithAttachment extends DecryptedMessage {
   attachment?: EncryptedAttachmentData;
+}
+
+function getRoomTypeLabel(roomType?: string): string {
+  return roomType === 'authenticated' ? 'Authenticated' : 'Legacy';
+}
+
+function getRoomTypeDescription(roomType?: string): string {
+  return roomType === 'authenticated'
+    ? 'Requires signed-in access'
+    : 'Available to anyone on the local network';
 }
 
 function RoomPage({
@@ -39,7 +44,8 @@ function RoomPage({
   encryption,
   onUpdateRoomKey,
   onLeave,
-  roomType = 'legacy'
+  roomType = 'legacy',
+  socketConnected,
 }: RoomPageProps): JSX.Element {
   const [messages, setMessages] = useState<Message[]>([]);
   const [members, setMembers] = useState<string[]>([]);
@@ -50,14 +56,37 @@ function RoomPage({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState<boolean>(false);
   const [fingerprint, setFingerprint] = useState<string>('');
   const [serverUrl, setServerUrl] = useState<string>('');
+  const [copiedRoomCode, setCopiedRoomCode] = useState<boolean>(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevMessagesLengthRef = useRef<number>(0);
   const userHasScrolledRef = useRef<boolean>(false);
+  const typingTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const copyResetTimerRef = useRef<number | null>(null);
 
-  const resolveAttachmentDownload = async (
+  function clearTypingTimeouts(): void {
+    typingTimeoutsRef.current.forEach(timeoutId => clearTimeout(timeoutId));
+    typingTimeoutsRef.current.clear();
+  }
+
+  function resetRoomViewState(): void {
+    setMessages([]);
+    setMembers([]);
+    setInputText('');
+    setTypingUsers(new Set());
+    setShowMembers(false);
+    setShowRoomInfo(false);
+    setShowLeaveConfirm(false);
+    setCopiedRoomCode(false);
+    prevMessagesLengthRef.current = 0;
+    userHasScrolledRef.current = false;
+    clearTypingTimeouts();
+  }
+
+  async function resolveAttachmentDownload(
     attachment: EncryptedAttachmentData
-  ): Promise<{ url: string; revokeAfterUse: boolean }> => {
+  ): Promise<{ url: string; revokeAfterUse: boolean }> {
     if (!attachment.encrypted || !attachment.iv || !attachment.metadata) {
       return {
         url: attachment.url,
@@ -76,159 +105,94 @@ function RoomPage({
       url: URL.createObjectURL(decrypted.blob),
       revokeAfterUse: true,
     };
-  };
+  }
 
-  useEffect(() => {
-    // Get key fingerprint
-    encryption.getFingerprint().then(setFingerprint);
+  function isSystemMessage(msg: Message): msg is SystemMessage {
+    return (msg as SystemMessage).type === 'system';
+  }
 
-    // Fetch server network info for QR code
-    fetch('/api/network-info')
-      .then(res => res.json())
-      .then(data => setServerUrl(data.url))
-      .catch(() => setServerUrl(window.location.origin));
+  function formatTime(timestamp: number): string {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
 
-    // Join room
-    socket.emit('join-room', { roomId });
+    if (isToday) {
+      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
 
-    // Handle room data
-    socket.on('room-data', async ({ members: roomMembers, memberKeys, encryptedMessages }: RoomDataPayload) => {
-      setMembers(roomMembers);
-
-      // Update room key with all member keys
-      await onUpdateRoomKey(memberKeys);
-
-      // Decrypt existing messages
-      const decrypted = await Promise.all(
-        encryptedMessages.map(async (msg: EncryptedMessage) => {
-          const text = await encryption.decrypt(msg.encryptedData, msg.iv);
-          
-          // Preserve attachment metadata; decrypt on demand when the user downloads it.
-          let decryptedAttachment: EncryptedAttachmentData | undefined;
-          if (msg.attachment) {
-            decryptedAttachment = msg.attachment as EncryptedAttachmentData;
-          }
-
-          return {
-            ...msg,
-            text: text || '🔒 Could not decrypt',
-            decrypted: !!text,
-            attachment: decryptedAttachment,
-          } as MessageWithAttachment;
-        })
-      );
-      setMessages(decrypted);
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
+  }
 
-    // Handle new encrypted message
-    socket.on('new-encrypted-message', async (msg: EncryptedMessage) => {
-      const text = await encryption.decrypt(msg.encryptedData, msg.iv);
-      
-      // Preserve attachment metadata; decrypt on demand when the user downloads it.
-      let decryptedAttachment: EncryptedAttachmentData | undefined;
-      if (msg.attachment) {
-        decryptedAttachment = msg.attachment as EncryptedAttachmentData;
+  function copyRoomCode(): void {
+    if (!navigator.clipboard?.writeText) {
+      return;
+    }
+
+    void navigator.clipboard.writeText(roomCode).then(() => {
+      setCopiedRoomCode(true);
+
+      if (copyResetTimerRef.current !== null) {
+        clearTimeout(copyResetTimerRef.current);
       }
 
-      setMessages(prev => [...prev, {
-        ...msg,
-        text: text || '🔒 Could not decrypt',
-        decrypted: !!text,
-        attachment: decryptedAttachment,
-      } as MessageWithAttachment]);
+      copyResetTimerRef.current = window.setTimeout(() => {
+        setCopiedRoomCode(false);
+        copyResetTimerRef.current = null;
+      }, 1400);
+    }).catch((error) => {
+      console.error('Failed to copy room code:', error);
     });
+  }
 
-    socket.on('user-typing', ({ username: typingUser }: { username: string }) => {
-      setTypingUsers(prev => new Set(prev).add(typingUser));
-      setTimeout(() => {
-        setTypingUsers(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(typingUser);
-          return newSet;
-        });
-      }, 3000);
-    });
+  function handleLeaveClick(): void {
+    setShowLeaveConfirm(true);
+  }
 
-    socket.on('member-joined', async ({ username: joinedUser }: MemberJoinedPayload) => {
-      setMessages(prev => [...prev, {
-        type: 'system',
-        text: `🔐 ${joinedUser} joined with verified encryption`,
-        timestamp: Date.now()
-      } as SystemMessage]);
-    });
+  function handleConfirmLeave(): void {
+    setShowLeaveConfirm(false);
+    onLeave();
+  }
 
-    socket.on('member-left', ({ username: leftUser }: MemberLeftPayload) => {
-      setMessages(prev => [...prev, {
-        type: 'system',
-        text: `${leftUser} left the room`,
-        timestamp: Date.now()
-      } as SystemMessage]);
-    });
+  function handleCancelLeave(): void {
+    setShowLeaveConfirm(false);
+  }
 
-    socket.on('members-update', async ({ members: updatedMembers, memberKeys }: MembersUpdatePayload) => {
-      setMembers(updatedMembers);
-      await onUpdateRoomKey(memberKeys);
-    });
-
-    return () => {
-      socket.off('room-data');
-      socket.off('new-encrypted-message');
-      socket.off('user-typing');
-      socket.off('member-joined');
-      socket.off('member-left');
-      socket.off('members-update');
-    };
-  }, [roomId, encryption, onUpdateRoomKey]);
-
-  // Mark that user has manually scrolled
-  const handleScroll = () => {
+  function handleScroll(): void {
     const container = messagesContainerRef.current;
-    if (!container) return;
+    if (!container) {
+      return;
+    }
 
     const { scrollTop, scrollHeight, clientHeight } = container;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    userHasScrolledRef.current = distanceFromBottom > 150;
+  }
 
-    // If user scrolled up more than 150px, mark as manually scrolled
-    if (distanceFromBottom > 150) {
-      userHasScrolledRef.current = true;
-    } else {
-      // If they scroll back near bottom, re-enable auto-scroll
-      userHasScrolledRef.current = false;
-    }
-  };
-
-  // Handle touch events for mobile
-  const handleTouchStart = () => {
+  function handleTouchStart(): void {
     handleScroll();
-  };
+  }
 
-  const handleTouchMove = () => {
+  function handleTouchMove(): void {
     handleScroll();
-  };
+  }
 
-  const handleTouchEnd = () => {
+  function handleTouchEnd(): void {
     handleScroll();
-  };
+  }
 
-  // Auto-scroll to bottom on new messages (unless user scrolled up)
-  useEffect(() => {
-    const hasNewMessages = messages.length > prevMessagesLengthRef.current;
-    prevMessagesLengthRef.current = messages.length;
-
-    // Only auto-scroll if: 1) new messages added, 2) user hasn't scrolled up
-    if (hasNewMessages && !userHasScrolledRef.current) {
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
-    }
-  }, [messages]);
-
-  const handleSendMessage = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
+  async function handleSendMessage(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
-    if (!inputText.trim()) return;
+
+    if (!inputText.trim()) {
+      return;
+    }
 
     try {
-      // Encrypt message before sending
       const { encryptedData, iv } = await encryption.encrypt(inputText.trim());
 
       socket.emit('send-encrypted-message', {
@@ -242,21 +206,15 @@ function RoomPage({
     } catch (error) {
       console.error('Encryption failed:', error);
     }
-  };
+  }
 
-  const handleTyping = (): void => {
-    socket.emit('typing', { roomId });
-  };
+  async function handleEncryptFile(file: File): Promise<{ blob: Blob; iv: string; metadata: string }> {
+    return encryption.encryptFile(file);
+  }
 
-  // Handle encrypted file upload
-  const handleEncryptFile = async (file: File): Promise<{ blob: Blob; iv: string; metadata: string }> => {
-    return await encryption.encryptFile(file);
-  };
-
-  const handleFileUploaded = async (attachment: Attachment): Promise<void> => {
+  async function handleFileUploaded(attachment: Attachment): Promise<void> {
     try {
-      // Encrypt a message about the file
-      const messageText = `📎 Shared encrypted file: ${attachment.filename}`;
+      const messageText = `Shared encrypted file: ${attachment.filename}`;
       const { encryptedData, iv } = await encryption.encrypt(messageText);
 
       socket.emit('send-encrypted-message', {
@@ -269,94 +227,246 @@ function RoomPage({
     } catch (error) {
       console.error('Failed to send file message:', error);
     }
-  };
+  }
 
-  const formatTime = (timestamp: number): string => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const isToday = date.toDateString() === now.toDateString();
+  function handleTyping(): void {
+    socket.emit('typing', { roomId });
+  }
 
-    if (isToday) {
-      // Today: show time only
-      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    } else {
-      // Other days: show date and time
-      return date.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
+  useEffect(() => {
+    resetRoomViewState();
+    socket.emit('join-room', { roomId });
+  }, [roomId]);
+
+  useEffect(() => {
+    const initRoomMetadata = async (): Promise<void> => {
+      try {
+        if (!window.crypto || !window.crypto.subtle) {
+          throw new Error('Web Crypto API not available');
+        }
+
+        const fingerprintValue = await encryption.getFingerprint();
+        setFingerprint(fingerprintValue);
+      } catch (error) {
+        console.error('Room setup failed:', error);
+      }
+
+      fetch('/api/network-info')
+        .then(res => res.json())
+        .then(data => setServerUrl(data.url))
+        .catch(() => setServerUrl(window.location.origin));
+    };
+
+    initRoomMetadata();
+  }, [encryption]);
+
+  useEffect(() => {
+    let active = true;
+
+    const handleRoomData = async ({
+      members: roomMembers,
+      memberKeys,
+      encryptedMessages
+    }: {
+      members: string[];
+      memberKeys: Record<string, string>;
+      encryptedMessages: EncryptedMessage[];
+    }) => {
+      if (!active) {
+        return;
+      }
+
+      setMembers(roomMembers);
+
+      try {
+        await onUpdateRoomKey(memberKeys);
+      } catch (error) {
+        console.error('Failed to refresh room key:', error);
+      }
+
+      const decrypted = await Promise.all(
+        encryptedMessages.map(async (msg: EncryptedMessage) => {
+          try {
+            const text = await encryption.decrypt(msg.encryptedData, msg.iv);
+            const attachment = msg.attachment as EncryptedAttachmentData | undefined;
+
+            return {
+              ...msg,
+              text: text || 'Message could not be decrypted',
+              decrypted: !!text,
+              attachment,
+            } as MessageWithAttachment;
+          } catch (error) {
+            console.error('Failed to decrypt message:', error);
+            const attachment = msg.attachment as EncryptedAttachmentData | undefined;
+
+            return {
+              ...msg,
+              text: 'Message could not be decrypted',
+              decrypted: false,
+              attachment,
+            } as MessageWithAttachment;
+          }
+        })
+      );
+
+      if (!active) {
+        return;
+      }
+
+      setMessages(decrypted);
+      prevMessagesLengthRef.current = decrypted.length;
+      userHasScrolledRef.current = false;
+    };
+
+    const handleNewEncryptedMessage = async (msg: EncryptedMessage) => {
+      if (!active) {
+        return;
+      }
+
+      try {
+        const text = await encryption.decrypt(msg.encryptedData, msg.iv);
+        if (!active) {
+          return;
+        }
+
+        const attachment = msg.attachment as EncryptedAttachmentData | undefined;
+
+        setMessages(prev => [...prev, {
+          ...msg,
+          text: text || 'Message could not be decrypted',
+          decrypted: !!text,
+          attachment,
+        } as MessageWithAttachment]);
+      } catch (error) {
+        console.error('Failed to decrypt incoming message:', error);
+      }
+    };
+
+    const handleUserTyping = ({ username: typingUser }: { username: string }) => {
+      setTypingUsers(prev => new Set(prev).add(typingUser));
+
+      const existingTimer = typingTimeoutsRef.current.get(typingUser);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      const timerId = window.setTimeout(() => {
+        setTypingUsers(prev => {
+          const next = new Set(prev);
+          next.delete(typingUser);
+          return next;
+        });
+        typingTimeoutsRef.current.delete(typingUser);
+      }, 2500);
+
+      typingTimeoutsRef.current.set(typingUser, timerId);
+    };
+
+    const handleMemberJoined = ({ username: joinedUser }: { username: string; publicKey: string }) => {
+      setMessages(prev => [...prev, {
+        type: 'system',
+        text: `${joinedUser} joined the room`,
+        timestamp: Date.now()
+      } as SystemMessage]);
+    };
+
+    const handleMemberLeft = ({ username: leftUser }: { username: string }) => {
+      setMessages(prev => [...prev, {
+        type: 'system',
+        text: `${leftUser} left the room`,
+        timestamp: Date.now()
+      } as SystemMessage]);
+    };
+
+    const handleMembersUpdate = async ({
+      members: updatedMembers,
+      memberKeys
+    }: {
+      members: string[];
+      memberKeys: Record<string, string>;
+    }) => {
+      if (!active) {
+        return;
+      }
+
+      setMembers(updatedMembers);
+
+      try {
+        await onUpdateRoomKey(memberKeys);
+      } catch (error) {
+        console.error('Failed to refresh members key state:', error);
+      }
+    };
+
+    socket.on('room-data', handleRoomData);
+    socket.on('new-encrypted-message', handleNewEncryptedMessage);
+    socket.on('user-typing', handleUserTyping);
+    socket.on('member-joined', handleMemberJoined);
+    socket.on('member-left', handleMemberLeft);
+    socket.on('members-update', handleMembersUpdate);
+
+    return () => {
+      active = false;
+      socket.off('room-data', handleRoomData);
+      socket.off('new-encrypted-message', handleNewEncryptedMessage);
+      socket.off('user-typing', handleUserTyping);
+      socket.off('member-joined', handleMemberJoined);
+      socket.off('member-left', handleMemberLeft);
+      socket.off('members-update', handleMembersUpdate);
+      clearTypingTimeouts();
+    };
+  }, [encryption, onUpdateRoomKey]);
+
+  useEffect(() => {
+    const hasNewMessages = messages.length > prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+
+    if (hasNewMessages && !userHasScrolledRef.current) {
+      const scrollTimer = window.setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 80);
+
+      return () => clearTimeout(scrollTimer);
     }
-  };
 
-  const copyRoomCode = (): void => {
-    navigator.clipboard.writeText(roomCode);
-  };
+    return undefined;
+  }, [messages]);
 
-  const handleLeaveClick = (): void => {
-    setShowLeaveConfirm(true);
-  };
-
-  const handleConfirmLeave = (): void => {
-    setShowLeaveConfirm(false);
-    onLeave();
-  };
-
-  const handleCancelLeave = (): void => {
-    setShowLeaveConfirm(false);
-  };
-
-  // Helper to check if message is system message
-  const isSystemMessage = (msg: Message): msg is SystemMessage => {
-    return (msg as SystemMessage).type === 'system';
-  };
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        clearTimeout(copyResetTimerRef.current);
+      }
+      clearTypingTimeouts();
+    };
+  }, []);
 
   return (
     <div className="page room-page">
-      <div className="room-container">
-        {/* Header */}
-        <div className="room-header">
+      <div className="room-shell">
+        <header className="room-header">
           <div className="room-info-left">
-            <button className="btn-back" onClick={handleLeaveClick}>
+            <button className="btn-back" onClick={handleLeaveClick} aria-label="Leave room">
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
             <div className="room-title-section">
-              <h3>
-                <span className="lock-icon">🔒</span>
-                Room {roomCode}
-                {roomType === 'authenticated' && (
-                  <span style={{
-                    marginLeft: '8px',
-                    fontSize: '11px',
-                    padding: '2px 8px',
-                    background: '#4CAF50',
-                    color: 'white',
-                    borderRadius: '12px',
-                    fontWeight: 'normal',
-                    verticalAlign: 'middle'
-                  }}>
-                    ✓ Authenticated
-                  </span>
-                )}
-                {roomType === 'legacy' && (
-                  <span style={{
-                    marginLeft: '8px',
-                    fontSize: '11px',
-                    padding: '2px 8px',
-                    background: '#FF9800',
-                    color: 'white',
-                    borderRadius: '12px',
-                    fontWeight: 'normal',
-                    verticalAlign: 'middle'
-                  }}>
-                    Legacy
-                  </span>
-                )}
-              </h3>
-              <span className="member-count">{members.length} member{members.length !== 1 ? 's' : ''}</span>
+              <div className="room-title-row">
+                <h3>
+                  <span className="lock-icon">🔒</span>
+                  Room {roomCode}
+                </h3>
+                <span className={`room-badge room-badge--${roomType}`}>
+                  {getRoomTypeLabel(roomType)}
+                </span>
+              </div>
+              <div className="room-meta-row">
+                <span className="member-count">{members.length} member{members.length !== 1 ? 's' : ''}</span>
+                <span className="room-meta-dot">•</span>
+                <span className="room-meta-note">{getRoomTypeDescription(roomType)}</span>
+              </div>
             </div>
           </div>
           <div className="header-actions">
@@ -364,16 +474,19 @@ function RoomPage({
               className="btn btn-icon"
               onClick={() => setShowRoomInfo(!showRoomInfo)}
               title="Room Info"
+              aria-label="Room Info"
             >
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
                 <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
+              <span className="sr-only">Room Info</span>
             </button>
             <button
               className="btn btn-icon"
               onClick={() => setShowMembers(!showMembers)}
               title="Members"
+              aria-label="Members"
             >
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="9" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
@@ -381,56 +494,76 @@ function RoomPage({
                 <path d="M3 21V18C3 16.3431 4.34315 15 6 15H12C13.6569 15 15 16.3431 15 18V21" stroke="currentColor" strokeWidth="1.5" />
                 <path d="M17 15C18.6569 15 20 16.3431 20 18V21" stroke="currentColor" strokeWidth="1.5" />
               </svg>
+              <span className="sr-only">Members</span>
             </button>
             <button
               className="btn btn-icon btn-leave"
               onClick={handleLeaveClick}
-              title={isOwner ? "Close Room (deletes all data)" : "Leave Room"}
-              style={{
-                background: 'rgba(255, 75, 75, 0.2)',
-                borderColor: 'rgba(255, 75, 75, 0.5)'
-              }}
+              title={isOwner ? 'Close Room (deletes all data)' : 'Leave Room'}
+              aria-label={isOwner ? 'Close room' : 'Leave room'}
             >
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M9 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H9" stroke="#ff4b4b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M16 17L21 12L16 7" stroke="#ff4b4b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M21 12H9" stroke="#ff4b4b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M9 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M16 17L21 12L16 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M21 12H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
           </div>
+        </header>
+
+        <div className="room-status-strip">
+          <span className="status-chip">
+            {socketConnected ? 'Same Wi-Fi or hotspot required' : 'Reconnecting to the local host'}
+          </span>
+          <span className="status-chip">Owner approval enabled</span>
+          <span className="status-chip">Messages stay end-to-end encrypted</span>
         </div>
 
-        {/* Room Info Panel */}
         {showRoomInfo && (
           <div className="room-info-panel">
             <div className="info-panel-header">
-              <h4>🔐 Encryption Info</h4>
-              <button className="close-btn" onClick={() => setShowRoomInfo(false)}>×</button>
+              <div>
+                <p className="info-panel-eyebrow">Session details</p>
+                <h4>How this room works</h4>
+              </div>
+              <button className="close-btn" onClick={() => setShowRoomInfo(false)} aria-label="Close room details">×</button>
             </div>
             <div className="info-panel-content">
               <div className="info-row">
-                <span className="info-label">Room Code</span>
+                <span className="info-label">Room code</span>
                 <div className="code-display">
                   <span className="code-value">{roomCode}</span>
-                  <button className="copy-btn" onClick={copyRoomCode}>Copy</button>
+                  <button className="copy-btn" onClick={copyRoomCode} type="button">
+                    {copiedRoomCode ? 'Copied' : 'Copy code'}
+                  </button>
                 </div>
               </div>
-              <div className="info-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
-                <span className="info-label">Mobile Join</span>
-                <div style={{ background: 'white', padding: '10px', borderRadius: '8px', alignSelf: 'center' }}>
+              <div className="info-row room-qr-row">
+                <span className="info-label">Mobile join</span>
+                <div className="room-qr-card">
                   <QRCodeCanvas
                     value={`${serverUrl || window.location.origin}/?room=${roomCode}`}
-                    size={150}
+                    size={156}
                     level={'H'}
                     marginSize={2}
                   />
                 </div>
-                <small style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.8rem', textAlign: 'center', width: '100%' }}>
-                  Ensure you are accessing via IP
+                <small className="room-footnote">
+                  Scan from a phone on the same Wi-Fi or hotspot. The room link stays local.
                 </small>
               </div>
+              <div className="room-summary-grid">
+                <div className="room-summary-card">
+                  <span className="room-summary-label">Transport</span>
+                  <span className="room-summary-value">Local network only</span>
+                </div>
+                <div className="room-summary-card">
+                  <span className="room-summary-label">Access</span>
+                  <span className="room-summary-value">Owner approval</span>
+                </div>
+              </div>
               <div className="info-row">
-                <span className="info-label">Your Key Fingerprint</span>
+                <span className="info-label">Your key fingerprint</span>
                 <code className="fingerprint">{fingerprint}</code>
               </div>
               <div className="info-row">
@@ -438,19 +571,18 @@ function RoomPage({
                 <span className="encryption-type">AES-256-GCM</span>
               </div>
               <div className="info-row">
-                <span className="info-label">Key Exchange</span>
+                <span className="info-label">Key exchange</span>
                 <span className="encryption-type">ECDH P-256</span>
               </div>
               <div className="security-note">
-                <span className="note-icon">ℹ️</span>
-                Messages and files are encrypted end-to-end. The server cannot read them.
+                <span className="note-icon">ℹ</span>
+                The server relays encrypted payloads and room state. It cannot read message contents.
               </div>
             </div>
           </div>
         )}
 
         <div className="room-content">
-          {/* Messages Area */}
           <div
             className="messages-container"
             ref={messagesContainerRef}
@@ -475,7 +607,7 @@ function RoomPage({
                   : (msg as DecryptedMessage).senderUsername === username
                     ? 'own-message'
                     : 'other-message'
-                  }`}
+                }`}
               >
                 {!isSystemMessage(msg) && (
                   <div className="message-header">
@@ -510,13 +642,15 @@ function RoomPage({
             )}
           </div>
 
-          {/* Members Sidebar */}
           {showMembers && (
             <div className="members-sidebar" onClick={() => setShowMembers(false)}>
               <div className="members-panel" onClick={(e) => e.stopPropagation()}>
                 <div className="panel-header">
-                  <h4>Members ({members.length})</h4>
-                  <button className="close-btn" onClick={() => setShowMembers(false)}>×</button>
+                  <div>
+                    <p className="info-panel-eyebrow">People here now</p>
+                    <h4>Members ({members.length})</h4>
+                  </div>
+                  <button className="close-btn" onClick={() => setShowMembers(false)} aria-label="Close members panel">×</button>
                 </div>
                 <ul className="members-list">
                   {members.map((member) => (
@@ -535,47 +669,52 @@ function RoomPage({
           )}
         </div>
 
-        {/* Input Area */}
         <form className="message-input-form" onSubmit={handleSendMessage}>
-          <FileUpload
-            roomId={roomId}
-            onFileUploaded={handleFileUploaded}
-            encryptFile={handleEncryptFile}
-          />
-          <div className="input-container">
-            <input
-              type="text"
-              className="input message-input"
-              placeholder="Type an encrypted message..."
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyPress={handleTyping}
+          <div className="composer-surface">
+            <FileUpload
+              roomId={roomId}
+              onFileUploaded={handleFileUploaded}
+              encryptFile={handleEncryptFile}
             />
+            <div className="input-container">
+              <input
+                type="text"
+                className="input message-input"
+                placeholder="Write a secure message..."
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={handleTyping}
+                maxLength={4000}
+              />
+            </div>
+            <button type="submit" className="btn btn-send" disabled={!inputText.trim()} aria-label="Send message">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
           </div>
-          <button type="submit" className="btn btn-send" disabled={!inputText.trim()}>
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          <div className="composer-meta">
+            <span>Messages are encrypted locally before upload.</span>
+            <span>{inputText.length}/4000</span>
+          </div>
         </form>
       </div>
 
-      {/* Leave Confirmation Modal */}
       <ConfirmModal
         isOpen={showLeaveConfirm}
-        title={isOwner ? "⚠️ Close Room?" : "Leave Room?"}
+        title={isOwner ? 'Close room?' : 'Leave room?'}
         message={isOwner
-          ? "You are the room owner. Leaving will permanently delete:"
-          : "Are you sure you want to leave this room?"
+          ? 'Leaving will permanently delete the room, messages, and membership state.'
+          : 'Are you sure you want to leave this room?'
         }
         details={isOwner ? [
-          "All chat messages",
-          "All room members",
-          "The entire room"
+          'All chat messages',
+          'All room members',
+          'The entire room'
         ] : null}
         onConfirm={handleConfirmLeave}
         onCancel={handleCancelLeave}
-        confirmText={isOwner ? "Close Room" : "Leave"}
+        confirmText={isOwner ? 'Close room' : 'Leave'}
         cancelText="Cancel"
         isDanger={isOwner}
       />

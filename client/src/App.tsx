@@ -20,6 +20,7 @@ function App(): JSX.Element {
     encryptionStatus,
     isAuthenticated,
     joinRequests,
+    socketConnected,
     toast,
     useNewAuth,
     username,
@@ -39,7 +40,10 @@ function App(): JSX.Element {
     <div className="app">
       <div className="encryption-indicator">
         <div className={`indicator-dot ${encryptionStatus}`}></div>
-        <span>{encryptionStatus === 'ready' ? 'E2E Encrypted' : 'Initializing...'}</span>
+        <span>{encryptionStatus === 'ready' ? 'E2E ready' : 'Initializing encryption...'}</span>
+        <span className={`connection-chip ${socketConnected ? 'is-online' : 'is-reconnecting'}`}>
+          {socketConnected ? 'Local link active' : 'Reconnecting'}
+        </span>
         {isAuthenticated && (
           <button className="logout-btn" onClick={handleLogout} title="Logout">
             <svg
@@ -98,6 +102,7 @@ function App(): JSX.Element {
           username={username}
           onCreateRoom={handleCreateRoom}
           onJoinRoom={handleJoinRoom}
+          socketConnected={socketConnected}
         />
       )}
 
@@ -111,6 +116,7 @@ function App(): JSX.Element {
           onUpdateRoomKey={handleUpdateRoomKey}
           onLeave={handleLeaveRoom}
           roomType={currentRoom.roomType}
+          socketConnected={socketConnected}
         />
       )}
 

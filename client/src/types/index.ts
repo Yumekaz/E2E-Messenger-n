@@ -224,6 +224,7 @@ export interface ClientToServerEvents {
 }
 
 export interface ServerToClientEvents {
+  'auth-expired': () => void;
   registered: (data: { username: string }) => void;
   'upload-token': (data: UploadTokenPayload) => void;
   'username-taken': () => void;
@@ -278,6 +279,7 @@ export interface HomePageProps {
   username: string;
   onCreateRoom: () => void;
   onJoinRoom: (roomCode: string) => void;
+  socketConnected: boolean;
 }
 
 export interface RoomPageProps {
@@ -289,6 +291,7 @@ export interface RoomPageProps {
   onUpdateRoomKey: (memberKeys: Record<string, string>) => Promise<void>;
   onLeave: () => void;
   roomType?: RoomType;
+  socketConnected: boolean;
 }
 
 export interface FileUploadProps {
@@ -348,4 +351,12 @@ export interface NetworkInfoResponse {
   url: string;
   ip: string;
   port: number;
+  candidates?: Array<{
+    name: string;
+    ip: string;
+    url: string;
+    httpUrl: string;
+    httpsUrl: string;
+    recommended: boolean;
+  }>;
 }

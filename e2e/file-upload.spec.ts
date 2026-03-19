@@ -78,10 +78,6 @@ test.describe('File Upload & Encryption', () => {
   test('should reject invalid file types', async ({ page }) => {
     await registerAndCreateRoom(page, 'fileinvalid');
 
-    page.once('dialog', async (dialog) => {
-      await dialog.accept();
-    });
-
     await page.locator('input[type="file"]').setInputFiles({
       name: 'malicious.exe',
       mimeType: 'application/x-msdownload',
@@ -89,6 +85,7 @@ test.describe('File Upload & Encryption', () => {
     });
 
     await page.waitForTimeout(500);
+    await expect(page.locator('.file-upload-error')).toContainText(/file type not allowed/i);
     await expect(page.locator('.file-attachment')).toHaveCount(0);
   });
 });
@@ -111,7 +108,9 @@ test.describe('File Security', () => {
     await registerAndCreateRoom(page, 'filelock');
 
     await expect(page.locator('.encryption-badge')).toBeVisible();
-    await expect(page.getByText('Messages and files are end-to-end encrypted')).toBeVisible();
+    await expect(
+      page.getByText(/messages and files are end-to-end encrypted/i)
+    ).toBeVisible();
 
     await page.locator('input[type="file"]').setInputFiles({
       name: 'encrypted-file.txt',

@@ -28,18 +28,18 @@ export async function gotoAuthPage(page: Page): Promise<void> {
 }
 
 export async function switchToSignUp(page: Page): Promise<void> {
-  await page.getByRole('button', { name: /sign up/i }).click();
-  await expect(page.getByPlaceholder(/username/i)).toBeVisible();
+  await page.getByRole('button', { name: /create one|sign up/i }).click();
+  await expect(page.getByLabel(/username/i)).toBeVisible();
 }
 
 export async function registerUser(page: Page, user: TestUser): Promise<void> {
   await gotoAuthPage(page);
   await switchToSignUp(page);
 
-  await page.getByPlaceholder('Email address').fill(user.email);
-  await page.getByPlaceholder(/username/i).fill(user.username);
-  await page.locator('input[type="password"]').nth(0).fill(user.password);
-  await page.locator('input[type="password"]').nth(1).fill(user.password);
+  await page.getByLabel(/email address/i).fill(user.email);
+  await page.getByLabel(/username/i).fill(user.username);
+  await page.getByLabel(/^password$/i).fill(user.password);
+  await page.getByLabel(/confirm password/i).fill(user.password);
   await page.getByRole('button', { name: /create account/i }).click();
 
   await expect(page.getByRole('button', { name: /create room/i })).toBeVisible({ timeout: 15000 });
@@ -49,9 +49,9 @@ export async function registerUser(page: Page, user: TestUser): Promise<void> {
 export async function loginUser(page: Page, user: TestUser, password: string = user.password): Promise<void> {
   await gotoAuthPage(page);
 
-  await page.getByPlaceholder('Email address').fill(user.email);
-  await page.getByPlaceholder('Password').fill(password);
-  await page.getByRole('button', { name: /login/i }).click();
+  await page.getByLabel(/email address/i).fill(user.email);
+  await page.getByLabel(/^password$/i).fill(password);
+  await page.getByRole('button', { name: /sign in|login/i }).click();
 }
 
 export async function createRoom(page: Page): Promise<string> {

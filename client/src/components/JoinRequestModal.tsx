@@ -13,9 +13,11 @@ function JoinRequestModal({ requests, onApprove, onDeny }: JoinRequestModalProps
   };
 
   return (
-    <div className="join-request-modal">
+    <div className="join-request-modal glass-modal">
       <div className="modal-header">
-        <h3>Join Requests ({requests.length})</h3>
+        <p className="modal-eyebrow">Owner approval</p>
+        <h3>Join requests ({requests.length})</h3>
+        <p className="modal-message">Approve the people you want in this local room.</p>
       </div>
       <div className="request-list">
         {requests.map((request) => (
@@ -27,12 +29,13 @@ function JoinRequestModal({ requests, onApprove, onDeny }: JoinRequestModalProps
               <div className="request-details">
                 <span className="request-username">{request.username}</span>
                 <span className="request-key" title={request.publicKey}>
-                  🔑 {request.publicKey.substring(0, 20)}...
+                  {request.publicKey.substring(0, 24)}...
                 </span>
               </div>
             </div>
             <div className="request-actions">
               <button
+                type="button"
                 className="btn btn-approve"
                 onClick={() => handleApprove(request)}
                 title="Approve"
@@ -40,6 +43,7 @@ function JoinRequestModal({ requests, onApprove, onDeny }: JoinRequestModalProps
                 ✓
               </button>
               <button
+                type="button"
                 className="btn btn-deny"
                 onClick={() => handleDeny(request)}
                 title="Deny"

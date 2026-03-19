@@ -64,6 +64,7 @@ function optionalAuth(req, res, next) {
  */
 function authenticateSocket(socket, next) {
   const token = socket.handshake.auth.token;
+  socket.authInvalid = false;
 
   if (!token) {
     // Allow unauthenticated connections for backward compatibility
@@ -77,8 +78,10 @@ function authenticateSocket(socket, next) {
     socket.user = decoded;
     next();
   } catch (error) {
-    // Allow connection but mark as unauthenticated
+    // Allow the socket to connect so the client can refresh or clear state,
+    // but do not silently treat a bad auth token as an intentional legacy session.
     socket.user = null;
+    socket.authInvalid = true;
     next();
   }
 }

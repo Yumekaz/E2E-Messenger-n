@@ -10,6 +10,11 @@ function getAuthToken(): string | null {
 
 // Socket type with our custom events
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+type SocketAuthState = { token: string | null };
+
+function setSocketAuthToken(token: string | null): void {
+  (socket.auth as SocketAuthState).token = token;
+}
 
 // Create socket with auth token
 export const socket: TypedSocket = io(SOCKET_URL, {
@@ -22,19 +27,24 @@ export const socket: TypedSocket = io(SOCKET_URL, {
   },
 });
 
-// Update auth token on reconnect
-socket.on('connect', () => {
-  const token = getAuthToken();
-  if (token) {
-    (socket.auth as { token: string | null }).token = token;
-  }
+// Ensure the current token is attached before each reconnect attempt.
+socket.io.on('reconnect_attempt', () => {
+  setSocketAuthToken(getAuthToken());
 });
 
 // Reconnect with new token after login
 export function reconnectWithAuth(): void {
-  (socket.auth as { token: string | null }).token = getAuthToken();
+  setSocketAuthToken(getAuthToken());
   socket.disconnect();
   socket.connect();
 }
+
+export function reconnectWithoutAuth(): void {
+  setSocketAuthToken(null);
+  socket.disconnect();
+  socket.connect();
+}
+
+export { setSocketAuthToken };
 
 export default socket;

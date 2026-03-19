@@ -8,88 +8,41 @@ function CryptoUnavailableOverlay({
   onReload,
 }: CryptoUnavailableOverlayProps): JSX.Element {
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: '#0a0b1e',
-        color: 'white',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem',
-        zIndex: 9999,
-        textAlign: 'center',
-      }}
-    >
-      <h2 style={{ color: '#ff4b4b', marginBottom: '1rem' }}>⚠️ Security Feature Restricted</h2>
-      <p
-        style={{
-          maxWidth: '600px',
-          lineHeight: '1.6',
-          marginBottom: '2rem',
-          color: '#a0a0b0',
-        }}
-      >
-        This app uses <strong>Web Crypto API</strong> for end-to-end encryption.
-        Modern browsers block this API on &quot;insecure&quot; connections.
-      </p>
-      <div
-        style={{
-          background: '#1a1b2e',
-          padding: '1.5rem',
-          borderRadius: '12px',
-          textAlign: 'left',
-          maxWidth: '600px',
-          width: '100%',
-        }}
-      >
-        <h3 style={{ color: '#00d4aa', marginBottom: '1rem' }}>
-          How to fix (Chrome/Edge/Brave):
-        </h3>
-        <ol
-          style={{
-            paddingLeft: '1.5rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.8rem',
-          }}
-        >
-          <li>
-            Open:{' '}
-            <code
-              style={{
-                background: 'rgba(255,255,255,0.1)',
-                padding: '2px 6px',
-                borderRadius: '4px',
-              }}
-            >
-              chrome://flags/#unsafely-treat-insecure-origin-as-secure
-            </code>
-          </li>
-          <li>Enable the flag</li>
-          <li>
-            Add: <code style={{ color: '#00d4aa' }}>{origin}</code>
-          </li>
-          <li>Relaunch browser</li>
-        </ol>
+    <div className="crypto-overlay" role="alertdialog" aria-modal="true">
+      <div className="crypto-overlay__panel">
+        <span className="crypto-overlay__eyebrow">Secure context required</span>
+        <h2>End-to-end encryption cannot start on this origin yet.</h2>
+        <p className="crypto-overlay__intro">
+          This app depends on the Web Crypto API. Browsers block it on origins they
+          consider insecure, so the room cannot safely send or decrypt messages until
+          the local address is trusted.
+        </p>
+
+        <div className="crypto-overlay__section">
+          <h3>Recommended fix</h3>
+          <p>Open the app over HTTPS or use the trusted local IP address shown by the server.</p>
+        </div>
+
+        <div className="crypto-overlay__section">
+          <h3>Browser fallback</h3>
+          <ol className="crypto-overlay__steps">
+            <li>
+              Open <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>
+            </li>
+            <li>Enable the flag.</li>
+            <li>
+              Add <code>{origin}</code>
+            </li>
+            <li>Relaunch the browser, then reload this page.</li>
+          </ol>
+        </div>
+
+        <div className="crypto-overlay__actions">
+          <button type="button" className="btn btn-primary" onClick={onReload}>
+            Reload app
+          </button>
+        </div>
       </div>
-      <button
-        onClick={onReload}
-        style={{
-          marginTop: '2rem',
-          padding: '12px 24px',
-          background: '#00d4aa',
-          border: 'none',
-          borderRadius: '8px',
-          color: '#000',
-          fontWeight: 'bold',
-          cursor: 'pointer',
-        }}
-      >
-        Reload App
-      </button>
     </div>
   );
 }

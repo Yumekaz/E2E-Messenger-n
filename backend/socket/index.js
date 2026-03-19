@@ -33,8 +33,24 @@ function setupSocketHandlers(io) {
   io.on('connection', (socket) => {
     logger.debug('Socket connected', { socketId: socket.id });
 
+    const rejectExpiredAuth = () => {
+      if (!socket.authInvalid) {
+        return false;
+      }
+
+      socket.emit('auth-expired');
+      logger.warn('Rejected socket action due to invalid auth token', {
+        socketId: socket.id,
+      });
+      return true;
+    };
+
     // Register user
     socket.on('register', ({ username, publicKey }) => {
+      if (rejectExpiredAuth()) {
+        return;
+      }
+
       // Check if username is taken
       if (state.usernames.has(username)) {
         // Check if the previous owner is still connected (Zombie check)
@@ -91,6 +107,10 @@ function setupSocketHandlers(io) {
      * Allows legacy users to upload files via HTTP
      */
     socket.on('request-upload-token', () => {
+      if (rejectExpiredAuth()) {
+        return;
+      }
+
       const user = state.users.get(socket.id);
       if (!user) {
         socket.emit('error', { message: 'Not registered' });

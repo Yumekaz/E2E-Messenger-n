@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import socket, { reconnectWithAuth } from '../socket';
+import socket, { reconnectWithAuth, reconnectWithoutAuth } from '../socket';
 import authService from '../services/authService';
 import useEncryption from './useEncryption';
 import useToast from './useToast';
@@ -30,6 +30,7 @@ interface UseMessengerControllerResult {
   encryptionStatus: EncryptionStatus;
   isAuthenticated: boolean;
   joinRequests: JoinRequest[];
+  socketConnected: boolean;
   toast: ReturnType<typeof useToast>['toast'];
   useNewAuth: boolean;
   username: string;
@@ -52,10 +53,16 @@ function useMessengerController(): UseMessengerControllerResult {
   const [username, setUsername] = useState('');
   const [currentRoom, setCurrentRoom] = useState<RoomState | null>(null);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
+  const [socketConnected, setSocketConnected] = useState(socket.connected);
 
   const pendingRoomCodeRef = useRef<string | null>(null);
   const usernameRef = useRef('');
+  const useNewAuthRef = useRef(true);
   const currentRoomRef = useRef<RoomState | null>(null);
+  const legacySessionRef = useRef(false);
+  const hasRegisteredRef = useRef(false);
+  const pendingReconnectRef = useRef(false);
+  const authRefreshPromiseRef = useRef<Promise<void> | null>(null);
   const { toast, showToast } = useToast();
   const showToastRef = useRef(showToast);
   const { encryption, encryptionRef, encryptionStatus } = useEncryption();
@@ -65,12 +72,57 @@ function useMessengerController(): UseMessengerControllerResult {
   }, [username]);
 
   useEffect(() => {
+    useNewAuthRef.current = useNewAuth;
+  }, [useNewAuth]);
+
+  useEffect(() => {
     currentRoomRef.current = currentRoom;
   }, [currentRoom]);
 
   useEffect(() => {
     showToastRef.current = showToast;
   }, [showToast]);
+
+  const clearActiveSessionState = (nextPage: AppPage): void => {
+    pendingRoomCodeRef.current = null;
+    usernameRef.current = '';
+    currentRoomRef.current = null;
+    legacySessionRef.current = false;
+    hasRegisteredRef.current = false;
+    pendingReconnectRef.current = false;
+    setIsAuthenticated(false);
+    setUsername('');
+    setCurrentRoom(null);
+    setJoinRequests([]);
+    setCurrentPage(nextPage);
+  };
+
+  useEffect(() => {
+    const handleConnectState = () => {
+      setSocketConnected(true);
+    };
+
+    const handleDisconnectState = () => {
+      setSocketConnected(false);
+
+      if (hasRegisteredRef.current) {
+        pendingReconnectRef.current = true;
+        showToastRef.current('Connection lost. Reconnecting to the local room...', 'warning');
+      }
+    };
+
+    socket.on('connect', handleConnectState);
+    socket.on('disconnect', handleDisconnectState);
+
+    if (socket.connected) {
+      handleConnectState();
+    }
+
+    return () => {
+      socket.off('connect', handleConnectState);
+      socket.off('disconnect', handleDisconnectState);
+    };
+  }, []);
 
   const emitRegistration = (nextUsername: string): boolean => {
     const publicKey = encryptionRef.current?.publicKeyExported;
@@ -111,10 +163,12 @@ function useMessengerController(): UseMessengerControllerResult {
 
     if (!authService.isAuthenticated() || !storedUser) {
       setIsAuthenticated(false);
+      legacySessionRef.current = false;
       setCurrentPage(resolveAppPage(useNewAuth));
       return;
     }
 
+    legacySessionRef.current = false;
     setUsername(storedUser.username);
     setIsAuthenticated(true);
     setCurrentPage('home');
@@ -151,13 +205,20 @@ function useMessengerController(): UseMessengerControllerResult {
     }
 
     const handleConnect = () => {
-      const storedUser = authService.getUser();
-      emitRegistration(storedUser?.username || usernameRef.current);
+      const storedUsername = authService.getUser()?.username;
+      if (storedUsername) {
+        emitRegistration(storedUsername);
+        return;
+      }
+
+      if (legacySessionRef.current && usernameRef.current) {
+        emitRegistration(usernameRef.current);
+      }
     };
 
     socket.on('connect', handleConnect);
 
-    if (socket.connected && (authService.getUser()?.username || usernameRef.current)) {
+    if (socket.connected) {
       handleConnect();
     }
 
@@ -167,17 +228,52 @@ function useMessengerController(): UseMessengerControllerResult {
   }, [encryptionStatus]);
 
   useEffect(() => {
+    const handleAuthExpired: ServerToClientEvents['auth-expired'] = async () => {
+      if (authRefreshPromiseRef.current) {
+        await authRefreshPromiseRef.current;
+        return;
+      }
+
+      authRefreshPromiseRef.current = (async () => {
+        try {
+          await authService.refreshAccessToken();
+          reconnectWithAuth();
+          showToastRef.current('Session refreshed for the local room.', 'info');
+        } catch {
+          await authService.logout();
+          clearActiveSessionState(resolveAppPage(useNewAuthRef.current));
+          reconnectWithoutAuth();
+          showToastRef.current('Session expired. Sign in again to rejoin authenticated rooms.', 'error');
+        } finally {
+          authRefreshPromiseRef.current = null;
+        }
+      })();
+
+      await authRefreshPromiseRef.current;
+    };
+
     const handleRegistered: ServerToClientEvents['registered'] = ({
       username: acceptedUsername,
     }) => {
+      const activeRoom = currentRoomRef.current;
+      const isReconnect = pendingReconnectRef.current && hasRegisteredRef.current;
+
+      pendingReconnectRef.current = false;
+      hasRegisteredRef.current = true;
       setUsername(acceptedUsername);
-      setCurrentPage('home');
-      showToastRef.current('🔐 Secure session started', 'success');
+      setCurrentPage(activeRoom ? 'room' : 'home');
 
       const pendingRoomCode = pendingRoomCodeRef.current;
       if (pendingRoomCode) {
         pendingRoomCodeRef.current = null;
         requestJoinRoom(pendingRoomCode);
+      } else if (activeRoom) {
+        socket.emit('join-room', { roomId: activeRoom.roomId });
+        showToastRef.current('Connection restored. Rejoining your encrypted room...', 'success');
+      } else if (isReconnect) {
+        showToastRef.current('Connection restored.', 'success');
+      } else {
+        showToastRef.current('Secure session started', 'success');
       }
     };
 
@@ -204,6 +300,7 @@ function useMessengerController(): UseMessengerControllerResult {
         memberKeys: { [usernameRef.current]: publicKey },
         roomType: normalizeRoomType(roomType),
       });
+      setJoinRequests([]);
       setCurrentPage('room');
 
       const typeLabel =
@@ -212,7 +309,11 @@ function useMessengerController(): UseMessengerControllerResult {
     };
 
     const handleJoinRequest: ServerToClientEvents['join-request'] = (request) => {
-      setJoinRequests((prev) => [...prev, request]);
+      setJoinRequests((prev) =>
+        prev.some((existing) => existing.requestId === request.requestId)
+          ? prev
+          : [...prev, request]
+      );
       showToastRef.current(`${request.username} wants to join`, 'info');
     };
 
@@ -235,6 +336,7 @@ function useMessengerController(): UseMessengerControllerResult {
         memberKeys,
         roomType: normalizeRoomType(roomType),
       });
+      setJoinRequests([]);
       setCurrentPage('room');
 
       const typeLabel = normalizeRoomType(roomType) === 'authenticated' ? ' (Authenticated)' : '';
@@ -251,10 +353,12 @@ function useMessengerController(): UseMessengerControllerResult {
 
     const handleRoomClosed: ServerToClientEvents['room-closed'] = () => {
       setCurrentRoom(null);
+      setJoinRequests([]);
       setCurrentPage('home');
       showToastRef.current('Room was closed by owner', 'error');
     };
 
+    socket.on('auth-expired', handleAuthExpired);
     socket.on('registered', handleRegistered);
     socket.on('username-taken', handleUsernameTaken);
     socket.on('room-created', handleRoomCreated);
@@ -265,6 +369,7 @@ function useMessengerController(): UseMessengerControllerResult {
     socket.on('room-closed', handleRoomClosed);
 
     return () => {
+      socket.off('auth-expired', handleAuthExpired);
       socket.off('registered', handleRegistered);
       socket.off('username-taken', handleUsernameTaken);
       socket.off('room-created', handleRoomCreated);
@@ -277,6 +382,7 @@ function useMessengerController(): UseMessengerControllerResult {
   }, []);
 
   const handleAuth = async (user: AuthUser): Promise<void> => {
+    legacySessionRef.current = false;
     setUsername(user.username);
     setIsAuthenticated(true);
     reconnectWithAuth();
@@ -299,11 +405,8 @@ function useMessengerController(): UseMessengerControllerResult {
 
   const handleLogout = async (): Promise<void> => {
     await authService.logout();
-    setIsAuthenticated(false);
-    setUsername('');
-    setCurrentRoom(null);
-    setJoinRequests([]);
-    setCurrentPage(resolveAppPage(useNewAuth));
+    clearActiveSessionState(resolveAppPage(useNewAuthRef.current));
+    reconnectWithoutAuth();
     showToastRef.current('Logged out successfully', 'success');
   };
 
@@ -313,6 +416,9 @@ function useMessengerController(): UseMessengerControllerResult {
       return;
     }
 
+    legacySessionRef.current = true;
+    usernameRef.current = name;
+    setUsername(name);
     emitRegistration(name);
   };
 
@@ -371,6 +477,7 @@ function useMessengerController(): UseMessengerControllerResult {
     encryptionStatus,
     isAuthenticated,
     joinRequests,
+    socketConnected,
     toast,
     useNewAuth,
     username,

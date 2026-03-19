@@ -58,7 +58,7 @@ export default defineConfig({
   webServer: {
     command: 'node scripts/start-playwright-server.js',
     url: 'http://127.0.0.1:3100',
-    reuseExistingServer: false,
+    reuseExistingServer: process.env.PW_REUSE_SERVER === '1',
     timeout: 120 * 1000,
     env: {
       JWT_SECRET: 'e2e-test-secret-key',

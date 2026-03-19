@@ -16,26 +16,31 @@ function ConfirmModal({
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        <h3 className="modal-title">{title}</h3>
+      <div className={`modal-content glass-modal confirm-modal ${isDanger ? 'confirm-modal--danger' : ''}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modal-header">
+          <p className="modal-eyebrow">{isDanger ? 'Danger zone' : 'Confirmation'}</p>
+          <h3 className="modal-title">{title}</h3>
+        </div>
         <p className="modal-message">{message}</p>
-        
+
         {details && details.length > 0 && (
           <ul className="modal-details">
             {details.map((detail, index) => (
-              <li key={index}>• {detail}</li>
+              <li key={index}>{detail}</li>
             ))}
           </ul>
         )}
-        
+
         <div className="modal-actions">
-          <button 
-            className="btn btn-secondary" 
+          <button
+            type="button"
+            className="btn btn-secondary"
             onClick={onCancel}
           >
             {cancelText}
           </button>
-          <button 
+          <button
+            type="button"
             className={`btn ${isDanger ? 'btn-danger' : 'btn-primary'}`}
             onClick={onConfirm}
           >

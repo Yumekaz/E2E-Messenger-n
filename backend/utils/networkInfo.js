@@ -1,50 +1,31 @@
 const os = require('os');
 
-const PRIORITY_INTERFACES = ['Local Area Connection*', 'Wi-Fi', 'Ethernet', 'en0', 'eth0', 'wlan0'];
-const SKIP_PATTERNS = ['vEthernet', 'WSL', 'Hyper-V', 'VirtualBox', 'VMware', 'Docker', 'Loopback'];
+const PRIORITY_INTERFACES = [
+  'local area connection',
+  'wi-fi',
+  'ethernet',
+  'hotspot',
+  'wireless',
+  'en0',
+  'eth0',
+  'wlan0',
+];
+const SKIP_PATTERNS = ['vethernet', 'wsl', 'hyper-v', 'virtualbox', 'vmware', 'docker', 'loopback'];
 
-function selectIpv4Address(interfaceEntries = []) {
-  for (const iface of interfaceEntries) {
-    if (iface.family === 'IPv4' && !iface.internal) {
-      return iface.address;
-    }
-  }
-
-  return null;
+function normalizeName(name = '') {
+  return name.toLowerCase();
 }
 
-function getPreferredLocalIp() {
-  const interfaces = os.networkInterfaces();
+function getPriority(name) {
+  const normalizedName = normalizeName(name);
+  const priorityIndex = PRIORITY_INTERFACES.findIndex((pattern) =>
+    normalizedName.includes(pattern)
+  );
 
-  for (const priorityName of PRIORITY_INTERFACES) {
-    for (const [name, entries] of Object.entries(interfaces)) {
-      if (!name.toLowerCase().includes(priorityName.toLowerCase())) {
-        continue;
-      }
-
-      const address = selectIpv4Address(entries);
-      if (address) {
-        return address;
-      }
-    }
-  }
-
-  for (const [name, entries] of Object.entries(interfaces)) {
-    if (SKIP_PATTERNS.some((pattern) => name.includes(pattern))) {
-      continue;
-    }
-
-    const address = selectIpv4Address(entries);
-    if (address) {
-      return address;
-    }
-  }
-
-  return 'localhost';
+  return priorityIndex === -1 ? PRIORITY_INTERFACES.length : priorityIndex;
 }
 
-function buildNetworkInfo(httpPort, httpsPort, httpsEnabled) {
-  const ip = getPreferredLocalIp();
+function buildCandidateUrls(ip, httpPort, httpsPort, httpsEnabled) {
   const httpUrl = `http://${ip}:${httpPort}`;
   const httpsUrl = `https://${ip}:${httpsPort}`;
 
@@ -52,9 +33,88 @@ function buildNetworkInfo(httpPort, httpsPort, httpsEnabled) {
     url: httpsEnabled ? httpsUrl : httpUrl,
     httpUrl,
     httpsUrl,
-    ip,
+  };
+}
+
+function listNetworkCandidates(httpPort, httpsPort, httpsEnabled) {
+  const interfaces = os.networkInterfaces();
+  const candidates = [];
+  const seenAddresses = new Set();
+
+  for (const [name, entries] of Object.entries(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry.family !== 'IPv4' || entry.internal) {
+        continue;
+      }
+
+      if (seenAddresses.has(entry.address)) {
+        continue;
+      }
+
+      seenAddresses.add(entry.address);
+
+      candidates.push({
+        name,
+        ip: entry.address,
+        priority: getPriority(name),
+        skipped: SKIP_PATTERNS.some((pattern) => normalizeName(name).includes(pattern)),
+      });
+    }
+  }
+
+  const viableCandidates = candidates.some((candidate) => !candidate.skipped)
+    ? candidates.filter((candidate) => !candidate.skipped)
+    : candidates;
+
+  const sorted = viableCandidates.sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+
+    if (left.name !== right.name) {
+      return left.name.localeCompare(right.name);
+    }
+
+    return left.ip.localeCompare(right.ip);
+  });
+
+  const mapped = sorted.map((candidate, index) => ({
+    name: candidate.name,
+    ip: candidate.ip,
+    recommended: index === 0,
+    ...buildCandidateUrls(candidate.ip, httpPort, httpsPort, httpsEnabled),
+  }));
+
+  if (mapped.length > 0) {
+    return mapped;
+  }
+
+  return [
+    {
+      name: 'localhost',
+      ip: 'localhost',
+      recommended: true,
+      ...buildCandidateUrls('localhost', httpPort, httpsPort, httpsEnabled),
+    },
+  ];
+}
+
+function getPreferredLocalIp() {
+  return listNetworkCandidates(0, 0, false)[0]?.ip || 'localhost';
+}
+
+function buildNetworkInfo(httpPort, httpsPort, httpsEnabled) {
+  const candidates = listNetworkCandidates(httpPort, httpsPort, httpsEnabled);
+  const preferred = candidates[0];
+
+  return {
+    url: preferred.url,
+    httpUrl: preferred.httpUrl,
+    httpsUrl: preferred.httpsUrl,
+    ip: preferred.ip,
     port: httpPort,
     httpsPort,
+    candidates,
   };
 }
 

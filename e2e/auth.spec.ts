@@ -24,9 +24,9 @@ test.describe('Authentication Flow', () => {
   test('should show login page by default', async ({ page }) => {
     await gotoAuthPage(page);
 
-    await expect(page.getByRole('heading', { name: 'SecureChat' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /login/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /sign up/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /private messaging over local wi-fi or hotspot/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /sign in|login/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /create one|sign up/i })).toBeVisible();
   });
 
   test('should register a new user', async ({ page }) => {
@@ -39,8 +39,10 @@ test.describe('Authentication Flow', () => {
 
     await page.locator('.logout-btn').click();
 
-    await expect(page.getByRole('heading', { name: 'SecureChat' })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole('button', { name: /login/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /private messaging over local wi-fi or hotspot/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: /sign in|login/i })).toBeVisible();
+    await page.waitForTimeout(1200);
+    await expect(page.getByRole('button', { name: /create room/i })).toHaveCount(0);
   });
 
   test('should login with existing user', async ({ page }) => {
@@ -59,12 +61,12 @@ test.describe('Authentication Flow', () => {
 
   test('should validate registration fields', async ({ page }) => {
     await gotoAuthPage(page);
-    await page.getByRole('button', { name: /sign up/i }).click();
+    await page.getByRole('button', { name: /create one|sign up/i }).click();
 
-    await page.getByPlaceholder('Email address').fill(`mismatch_${Date.now()}@example.com`);
-    await page.getByPlaceholder(/username/i).fill(`mismatch_${Date.now()}`.slice(0, 20));
-    await page.locator('input[type="password"]').nth(0).fill(testUser.password);
-    await page.locator('input[type="password"]').nth(1).fill('DifferentPassword123');
+    await page.getByLabel(/email address/i).fill(`mismatch_${Date.now()}@example.com`);
+    await page.getByLabel(/username/i).fill(`mismatch_${Date.now()}`.slice(0, 20));
+    await page.getByLabel(/^password$/i).fill(testUser.password);
+    await page.getByLabel(/confirm password/i).fill('DifferentPassword123');
     await page.getByRole('button', { name: /create account/i }).click();
 
     await expect(page.locator('.error-message')).toContainText(/passwords do not match/i);
