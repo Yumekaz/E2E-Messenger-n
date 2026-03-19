@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { registerAndCreateRoom } from './helpers';
+import { buildUser, createRoom, registerAndCreateRoom, registerUser } from './helpers';
 
 /**
  * E2E Tests: File Upload & Encryption
@@ -9,6 +9,35 @@ import { registerAndCreateRoom } from './helpers';
  * - View encrypted file entries
  * - Reject invalid file types
  */
+
+async function captureLatestBlobText(page: import('@playwright/test').Page): Promise<string> {
+  await page.evaluate(() => {
+    if ((window as any).__downloadCaptureInstalled) {
+      return;
+    }
+
+    const originalClick = HTMLAnchorElement.prototype.click;
+    (window as any).__lastDownloadHref = '';
+    (window as any).__downloadCaptureInstalled = true;
+
+    HTMLAnchorElement.prototype.click = function clickWithCapture() {
+      (window as any).__lastDownloadHref = this.href;
+      return originalClick.call(this);
+    };
+  });
+
+  await page.locator('.file-attachment').evaluate((element) => {
+    (element as HTMLElement).click();
+  });
+  await page.waitForFunction(() => !!(window as any).__lastDownloadHref, null, { timeout: 5000 });
+
+  const text = await page.evaluate(async () => {
+    const latestUrl = (window as any).__lastDownloadHref as string;
+    const response = await fetch(latestUrl);
+    return await response.text();
+  });
+  return text;
+}
 
 test.describe('File Upload & Encryption', () => {
   test('should show file upload button with encryption badge', async ({ page }) => {
@@ -119,5 +148,97 @@ test.describe('File Security', () => {
     });
 
     await expect(page.locator('.encrypted-badge')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('should let an approved member download and decrypt an encrypted file', async ({ browser }) => {
+    const ownerContext = await browser.newContext({ acceptDownloads: true });
+    const memberContext = await browser.newContext({ acceptDownloads: true });
+    const ownerPage = await ownerContext.newPage();
+    const memberPage = await memberContext.newPage();
+
+    try {
+      const owner = buildUser('fileowner');
+      const member = buildUser('filemember');
+      const fileContents = `Sensitive file content ${Date.now()}`;
+
+      await registerUser(ownerPage, owner);
+      const roomCode = await createRoom(ownerPage);
+
+      await registerUser(memberPage, member);
+      await memberPage.getByRole('button', { name: /join room/i }).click();
+      await memberPage.getByLabel(/room code/i).fill(roomCode);
+      await memberPage.getByRole('button', { name: /request to join/i }).click();
+
+      await expect(ownerPage.locator('.join-request-modal')).toContainText(member.username, {
+        timeout: 15000,
+      });
+      await ownerPage.locator('.join-request-modal .btn-approve').click();
+      await expect(ownerPage.locator('.join-request-modal')).toHaveCount(0, { timeout: 10000 });
+
+      await expect(memberPage.locator('.room-header')).toBeVisible({ timeout: 15000 });
+
+      await ownerPage.locator('input[type="file"]').setInputFiles({
+        name: 'shared-note.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from(fileContents),
+      });
+
+      await expect(memberPage.locator('.file-name').filter({ hasText: 'shared-note.txt' })).toBeVisible({
+        timeout: 15000,
+      });
+
+      const downloadedText = await captureLatestBlobText(memberPage);
+      expect(downloadedText).toBe(fileContents);
+    } finally {
+      void ownerContext.close();
+      void memberContext.close();
+    }
+  });
+
+  test('should let a newly approved member open a file uploaded before they joined', async ({ browser }) => {
+    const ownerContext = await browser.newContext({ acceptDownloads: true });
+    const memberContext = await browser.newContext({ acceptDownloads: true });
+    const ownerPage = await ownerContext.newPage();
+    const memberPage = await memberContext.newPage();
+
+    try {
+      const owner = buildUser('histowner');
+      const member = buildUser('histmember');
+      const fileContents = `Historical encrypted payload ${Date.now()}`;
+
+      await registerUser(ownerPage, owner);
+      const roomCode = await createRoom(ownerPage);
+
+      await ownerPage.locator('input[type="file"]').setInputFiles({
+        name: 'pre-join-shared.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from(fileContents),
+      });
+
+      await expect(
+        ownerPage.locator('.file-name').filter({ hasText: 'pre-join-shared.txt' })
+      ).toBeVisible({ timeout: 15000 });
+
+      await registerUser(memberPage, member);
+      await memberPage.getByRole('button', { name: /join room/i }).click();
+      await memberPage.getByLabel(/room code/i).fill(roomCode);
+      await memberPage.getByRole('button', { name: /request to join/i }).click();
+
+      await expect(ownerPage.locator('.join-request-modal')).toContainText(member.username, {
+        timeout: 15000,
+      });
+      await ownerPage.locator('.join-request-modal .btn-approve').click();
+      await expect(ownerPage.locator('.join-request-modal')).toHaveCount(0, { timeout: 10000 });
+      await expect(memberPage.locator('.room-header')).toBeVisible({ timeout: 15000 });
+      await expect(
+        memberPage.locator('.file-name').filter({ hasText: 'pre-join-shared.txt' })
+      ).toBeVisible({ timeout: 15000 });
+
+      const downloadedText = await captureLatestBlobText(memberPage);
+      expect(downloadedText).toBe(fileContents);
+    } finally {
+      void ownerContext.close();
+      void memberContext.close();
+    }
   });
 });

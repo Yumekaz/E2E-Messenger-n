@@ -25,7 +25,7 @@ const COLORS = {
 
 class Logger {
   constructor() {
-    this.level = config.isProduction ? 'info' : 'debug';
+    this.level = config.env === 'test' ? 'warn' : config.isProduction ? 'info' : 'debug';
   }
 
   /**

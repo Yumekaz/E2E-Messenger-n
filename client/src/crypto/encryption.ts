@@ -24,6 +24,15 @@ export interface DecryptedFile {
   mimeType: string;
 }
 
+export interface DecryptedFileMetadata {
+  name: string;
+  type: string;
+  size: number;
+}
+
+const DEVICE_KEYPAIR_STORAGE_KEY = 'maja-device-keypair-v1';
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 30_000;
+
 // ==================== HELPER FUNCTIONS ====================
 
 // Helper: ArrayBuffer to Base64
@@ -71,6 +80,11 @@ export async function generateKeyPair(): Promise<CryptoKeyPair> {
   return keyPair;
 }
 
+export async function exportPrivateKey(privateKey: CryptoKey): Promise<string> {
+  const exported = await window.crypto.subtle.exportKey('pkcs8', privateKey);
+  return arrayBufferToBase64(exported);
+}
+
 // Export public key to share with others
 export async function exportPublicKey(publicKey: CryptoKey): Promise<string> {
   const exported = await window.crypto.subtle.exportKey('spki', publicKey);
@@ -92,6 +106,20 @@ export async function importPublicKey(base64Key: string): Promise<CryptoKey> {
   );
 }
 
+export async function importPrivateKey(base64Key: string): Promise<CryptoKey> {
+  const keyData = base64ToArrayBuffer(base64Key);
+  return await window.crypto.subtle.importKey(
+    'pkcs8',
+    keyData,
+    {
+      name: 'ECDH',
+      namedCurve: 'P-256'
+    },
+    true,
+    ['deriveKey', 'deriveBits']
+  );
+}
+
 // Derive shared secret key from our private key and their public key
 export async function deriveSharedKey(privateKey: CryptoKey, publicKey: CryptoKey): Promise<CryptoKey> {
   return await window.crypto.subtle.deriveKey(
@@ -109,9 +137,8 @@ export async function deriveSharedKey(privateKey: CryptoKey, publicKey: CryptoKe
   );
 }
 
-// Generate a room encryption key (for group chats)
-// All members derive the same key from room code + shared secret
-export async function generateRoomKey(roomCode: string, memberPublicKeys: string[]): Promise<CryptoKey> {
+// Legacy room key derivation kept for backward compatibility with older rooms.
+export async function deriveLegacyRoomKey(roomCode: string, memberPublicKeys: string[]): Promise<CryptoKey> {
   // Sort keys to ensure consistent ordering
   const sortedKeys = [...memberPublicKeys].sort();
   const combined = roomCode + sortedKeys.join('');
@@ -127,7 +154,73 @@ export async function generateRoomKey(roomCode: string, memberPublicKeys: string
     'raw',
     hashBuffer,
     { name: 'AES-GCM', length: 256 },
-    false,
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function generateRoomKey(): Promise<CryptoKey> {
+  return await window.crypto.subtle.generateKey(
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function wrapRoomKeyForPeer(
+  privateKey: CryptoKey,
+  peerPublicKeyBase64: string,
+  roomKey: CryptoKey
+): Promise<{ encryptedRoomKey: string; iv: string }> {
+  const peerPublicKey = await importPublicKey(peerPublicKeyBase64);
+  const sharedKey = await deriveSharedKey(privateKey, peerPublicKey);
+  const rawRoomKey = await window.crypto.subtle.exportKey('raw', roomKey);
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+  const encryptedRoomKey = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv,
+    },
+    sharedKey,
+    rawRoomKey
+  );
+
+  return {
+    encryptedRoomKey: arrayBufferToBase64(encryptedRoomKey),
+    iv: uint8ArrayToBase64(iv),
+  };
+}
+
+export async function unwrapRoomKeyFromPeer(
+  privateKey: CryptoKey,
+  peerPublicKeyBase64: string,
+  encryptedRoomKey: string,
+  iv: string
+): Promise<CryptoKey> {
+  const peerPublicKey = await importPublicKey(peerPublicKeyBase64);
+  const sharedKey = await deriveSharedKey(privateKey, peerPublicKey);
+
+  const decryptedRoomKey = await window.crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: base64ToArrayBuffer(iv),
+    },
+    sharedKey,
+    base64ToArrayBuffer(encryptedRoomKey)
+  );
+
+  return await window.crypto.subtle.importKey(
+    'raw',
+    decryptedRoomKey,
+    {
+      name: 'AES-GCM',
+      length: 256,
+    },
+    true,
     ['encrypt', 'decrypt']
   );
 }
@@ -146,6 +239,46 @@ export async function getKeyFingerprint(publicKey: CryptoKey): Promise<string> {
   }
   
   return fingerprint;
+}
+
+async function loadStoredKeyPair(): Promise<CryptoKeyPair | null> {
+  const stored = window.localStorage.getItem(DEVICE_KEYPAIR_STORAGE_KEY);
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stored) as { publicKey: string; privateKey: string };
+    if (!parsed.publicKey || !parsed.privateKey) {
+      return null;
+    }
+
+    const [publicKey, privateKey] = await Promise.all([
+      importPublicKey(parsed.publicKey),
+      importPrivateKey(parsed.privateKey),
+    ]);
+
+    return { publicKey, privateKey };
+  } catch (error) {
+    console.warn('Failed to restore stored device keypair:', error);
+    window.localStorage.removeItem(DEVICE_KEYPAIR_STORAGE_KEY);
+    return null;
+  }
+}
+
+async function persistKeyPair(keyPair: CryptoKeyPair): Promise<void> {
+  const [publicKey, privateKey] = await Promise.all([
+    exportPublicKey(keyPair.publicKey),
+    exportPrivateKey(keyPair.privateKey),
+  ]);
+
+  window.localStorage.setItem(
+    DEVICE_KEYPAIR_STORAGE_KEY,
+    JSON.stringify({
+      publicKey,
+      privateKey,
+    })
+  );
 }
 
 // ==================== MESSAGE ENCRYPTION ====================
@@ -299,15 +432,7 @@ export async function decryptFileFromDownload(
   iv: string,
   encryptedMetadata: string
 ): Promise<{ blob: Blob; filename: string; mimeType: string }> {
-  // Decrypt metadata
-  const metadataObj = JSON.parse(encryptedMetadata) as EncryptedData;
-  const metadataJson = await decryptMessage(sharedKey, metadataObj.encryptedData, metadataObj.iv);
-  
-  if (!metadataJson) {
-    throw new Error('Failed to decrypt file metadata');
-  }
-  
-  const metadata = JSON.parse(metadataJson) as { name: string; type: string; size: number };
+  const metadata = await decryptEncryptedFileMetadata(sharedKey, encryptedMetadata);
   
   // Decrypt file content
   const encryptedBuffer = await encryptedBlob.arrayBuffer();
@@ -325,6 +450,20 @@ export async function decryptFileFromDownload(
   };
 }
 
+export async function decryptEncryptedFileMetadata(
+  sharedKey: CryptoKey,
+  encryptedMetadata: string
+): Promise<DecryptedFileMetadata> {
+  const metadataObj = JSON.parse(encryptedMetadata) as EncryptedData;
+  const metadataJson = await decryptMessage(sharedKey, metadataObj.encryptedData, metadataObj.iv);
+
+  if (!metadataJson) {
+    throw new Error('Failed to decrypt file metadata');
+  }
+
+  return JSON.parse(metadataJson) as DecryptedFileMetadata;
+}
+
 /**
  * Create download link for decrypted file
  */
@@ -336,7 +475,9 @@ export function downloadDecryptedFile(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, DOWNLOAD_URL_REVOKE_DELAY_MS);
 }
 
 /**
@@ -354,13 +495,57 @@ export class RoomEncryption {
   publicKeyExported: string | null = null;
 
   async initialize(): Promise<string> {
-    this.keyPair = await generateKeyPair();
+    this.keyPair = await loadStoredKeyPair();
+
+    if (!this.keyPair) {
+      this.keyPair = await generateKeyPair();
+      await persistKeyPair(this.keyPair);
+    }
+
     this.publicKeyExported = await exportPublicKey(this.keyPair.publicKey);
     return this.publicKeyExported;
   }
 
-  async setRoomKey(roomCode: string, memberPublicKeys: string[]): Promise<void> {
-    this.roomKey = await generateRoomKey(roomCode, memberPublicKeys);
+  hasRoomKey(): boolean {
+    return this.roomKey !== null;
+  }
+
+  async createRoomKey(): Promise<void> {
+    this.roomKey = await generateRoomKey();
+  }
+
+  async setLegacyRoomKey(roomCode: string, memberPublicKeys: string[]): Promise<void> {
+    this.roomKey = await deriveLegacyRoomKey(roomCode, memberPublicKeys);
+  }
+
+  async wrapRoomKeyForMember(memberPublicKey: string): Promise<{ wrappedRoomKey: string; wrappedRoomKeyIv: string }> {
+    if (!this.keyPair?.privateKey || !this.roomKey) {
+      throw new Error('Room key or private key not available');
+    }
+
+    const { encryptedRoomKey, iv } = await wrapRoomKeyForPeer(
+      this.keyPair.privateKey,
+      memberPublicKey,
+      this.roomKey
+    );
+
+    return {
+      wrappedRoomKey: encryptedRoomKey,
+      wrappedRoomKeyIv: iv,
+    };
+  }
+
+  async restoreRoomKey(senderPublicKey: string, wrappedRoomKey: string, wrappedRoomKeyIv: string): Promise<void> {
+    if (!this.keyPair?.privateKey) {
+      throw new Error('Private key not generated');
+    }
+
+    this.roomKey = await unwrapRoomKeyFromPeer(
+      this.keyPair.privateKey,
+      senderPublicKey,
+      wrappedRoomKey,
+      wrappedRoomKeyIv
+    );
   }
 
   async encrypt(plaintext: string): Promise<EncryptedData> {
@@ -382,6 +567,14 @@ export class RoomEncryption {
   async decryptFile(encryptedBlob: Blob, iv: string, encryptedMetadata: string): Promise<{ blob: Blob; filename: string; mimeType: string }> {
     if (!this.roomKey) throw new Error('Room key not set');
     return await decryptFileFromDownload(this.roomKey, encryptedBlob, iv, encryptedMetadata);
+  }
+
+  async decryptFileMetadata(encryptedMetadata: string): Promise<DecryptedFileMetadata> {
+    if (!this.roomKey) {
+      throw new Error('Room key not set');
+    }
+
+    return await decryptEncryptedFileMetadata(this.roomKey, encryptedMetadata);
   }
 
   async getFingerprint(): Promise<string> {

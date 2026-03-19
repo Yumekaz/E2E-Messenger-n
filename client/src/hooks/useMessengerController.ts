@@ -143,6 +143,73 @@ function useMessengerController(): UseMessengerControllerResult {
     showToastRef.current('Join request sent...', 'info');
   };
 
+  const restoreRoomKey = async ({
+    roomCode,
+    memberKeys,
+    wrappedRoomKey,
+    wrappedRoomKeyIv,
+    keySenderUsername,
+  }: {
+    roomCode: string;
+    memberKeys: Record<string, string>;
+    wrappedRoomKey?: string | null;
+    wrappedRoomKeyIv?: string | null;
+    keySenderUsername?: string | null;
+  }): Promise<void> => {
+    if (!encryptionRef.current) {
+      return;
+    }
+
+    if (wrappedRoomKey && wrappedRoomKeyIv && keySenderUsername) {
+      const senderPublicKey = memberKeys[keySenderUsername];
+      if (!senderPublicKey) {
+        throw new Error('Missing sender key for room key restore');
+      }
+
+      await encryptionRef.current.restoreRoomKey(
+        senderPublicKey,
+        wrappedRoomKey,
+        wrappedRoomKeyIv
+      );
+      return;
+    }
+
+    await encryptionRef.current.setLegacyRoomKey(roomCode, Object.values(memberKeys));
+  };
+
+  const approveJoinRequestOnServer = async (payload: {
+    requestId: string;
+    wrappedRoomKey: string;
+    wrappedRoomKeyIv: string;
+    keySenderUsername: string;
+  }): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+      (socket.timeout(10000) as any).emit(
+        'approve-join',
+        payload,
+        (
+          error: Error | null,
+          response?: {
+            ok?: boolean;
+            message?: string;
+          }
+        ) => {
+          if (error) {
+            reject(new Error('Approval request timed out'));
+            return;
+          }
+
+          if (!response?.ok) {
+            reject(new Error(response?.message || 'Approval failed'));
+            return;
+          }
+
+          resolve();
+        }
+      );
+    });
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
@@ -169,6 +236,7 @@ function useMessengerController(): UseMessengerControllerResult {
     }
 
     legacySessionRef.current = false;
+    usernameRef.current = storedUser.username;
     setUsername(storedUser.username);
     setIsAuthenticated(true);
     setCurrentPage('home');
@@ -260,6 +328,7 @@ function useMessengerController(): UseMessengerControllerResult {
 
       pendingReconnectRef.current = false;
       hasRegisteredRef.current = true;
+      usernameRef.current = acceptedUsername;
       setUsername(acceptedUsername);
       setCurrentPage(activeRoom ? 'room' : 'home');
 
@@ -291,7 +360,16 @@ function useMessengerController(): UseMessengerControllerResult {
         return;
       }
 
-      await encryptionRef.current.setRoomKey(roomCode, [publicKey]);
+      await encryptionRef.current.createRoomKey();
+      const { wrappedRoomKey, wrappedRoomKeyIv } =
+        await encryptionRef.current.wrapRoomKeyForMember(publicKey);
+
+      socket.emit('sync-room-key', {
+        roomId,
+        wrappedRoomKey,
+        wrappedRoomKeyIv,
+        keySenderUsername: usernameRef.current,
+      });
 
       setCurrentRoom({
         roomId,
@@ -322,25 +400,39 @@ function useMessengerController(): UseMessengerControllerResult {
       roomCode,
       roomType,
       memberKeys,
+      wrappedRoomKey,
+      wrappedRoomKeyIv,
+      keySenderUsername,
     }: JoinApprovedPayload) => {
       if (!encryptionRef.current) {
         return;
       }
 
-      await encryptionRef.current.setRoomKey(roomCode, Object.values(memberKeys));
+      try {
+        await restoreRoomKey({
+          roomCode,
+          memberKeys,
+          wrappedRoomKey,
+          wrappedRoomKeyIv,
+          keySenderUsername,
+        });
 
-      setCurrentRoom({
-        roomId,
-        roomCode,
-        isOwner: false,
-        memberKeys,
-        roomType: normalizeRoomType(roomType),
-      });
-      setJoinRequests([]);
-      setCurrentPage('room');
+        setCurrentRoom({
+          roomId,
+          roomCode,
+          isOwner: false,
+          memberKeys,
+          roomType: normalizeRoomType(roomType),
+        });
+        setJoinRequests([]);
+        setCurrentPage('room');
 
-      const typeLabel = normalizeRoomType(roomType) === 'authenticated' ? ' (Authenticated)' : '';
-      showToastRef.current(`Joined secure room${typeLabel}`, 'success');
+        const typeLabel = normalizeRoomType(roomType) === 'authenticated' ? ' (Authenticated)' : '';
+        showToastRef.current(`Joined secure room${typeLabel}`, 'success');
+      } catch (error) {
+        console.error('Failed to restore room key after approval:', error);
+        showToastRef.current('Approval arrived, but your room key could not be restored.', 'error');
+      }
     };
 
     const handleJoinDenied: ServerToClientEvents['join-denied'] = () => {
@@ -383,6 +475,7 @@ function useMessengerController(): UseMessengerControllerResult {
 
   const handleAuth = async (user: AuthUser): Promise<void> => {
     legacySessionRef.current = false;
+    usernameRef.current = user.username;
     setUsername(user.username);
     setIsAuthenticated(true);
     reconnectWithAuth();
@@ -431,8 +524,28 @@ function useMessengerController(): UseMessengerControllerResult {
   };
 
   const handleApproveJoin = async ({ requestId }: { requestId: string }): Promise<void> => {
-    socket.emit('approve-join', { requestId });
-    setJoinRequests((prev) => prev.filter((request) => request.requestId !== requestId));
+    const request = joinRequests.find((entry) => entry.requestId === requestId);
+    if (!request || !encryptionRef.current) {
+      showToastRef.current('Unable to approve join request right now.', 'error');
+      return;
+    }
+
+    try {
+      const { wrappedRoomKey, wrappedRoomKeyIv } =
+        await encryptionRef.current.wrapRoomKeyForMember(request.publicKey);
+
+      await approveJoinRequestOnServer({
+        requestId,
+        wrappedRoomKey,
+        wrappedRoomKeyIv,
+        keySenderUsername: usernameRef.current,
+      });
+
+      setJoinRequests((prev) => prev.filter((entry) => entry.requestId !== requestId));
+    } catch (error) {
+      console.error('Failed to wrap room key for join approval:', error);
+      showToastRef.current('Could not prepare encrypted room access for this member.', 'error');
+    }
   };
 
   const handleDenyJoin = (requestId: string): void => {
@@ -443,12 +556,10 @@ function useMessengerController(): UseMessengerControllerResult {
   const handleUpdateRoomKey = async (
     memberKeys: Record<string, string>
   ): Promise<void> => {
-    const room = currentRoomRef.current;
-    if (!room || !encryptionRef.current) {
+    if (!currentRoomRef.current) {
       return;
     }
 
-    await encryptionRef.current.setRoomKey(room.roomCode, Object.values(memberKeys));
     setCurrentRoom((prev) => (prev ? { ...prev, memberKeys } : null));
   };
 

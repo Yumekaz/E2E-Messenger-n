@@ -10,7 +10,7 @@ const buildBanner = require('./buildBanner');
 const { DEFAULT_HTTPS_PORT, createServerBundle } = require('./createServerBundle');
 const registerProcessHandlers = require('./registerProcessHandlers');
 
-function startListening(server, port) {
+function startListening(server, port, host) {
   return new Promise((resolve, reject) => {
     const handleError = (error) => {
       server.off('error', handleError);
@@ -18,7 +18,7 @@ function startListening(server, port) {
     };
 
     server.once('error', handleError);
-    server.listen(port, () => {
+    server.listen(port, host, () => {
       server.off('error', handleError);
       resolve();
     });
@@ -45,12 +45,12 @@ async function startServer() {
     await db.initializeDatabase();
     setupSocketHandlers(io);
 
-    await startListening(server, config.port);
-    logger.info('HTTP server started', { port: config.port, env: config.env });
+    await startListening(server, config.port, config.host);
+    logger.info('HTTP server started', { port: config.port, host: config.host, env: config.env });
 
     if (httpsServer) {
-      await startListening(httpsServer, httpsPort);
-      logger.info('HTTPS server started', { port: httpsPort });
+      await startListening(httpsServer, httpsPort, config.host);
+      logger.info('HTTPS server started', { port: httpsPort, host: config.host });
     }
 
     const localIP = getPreferredLocalIp();

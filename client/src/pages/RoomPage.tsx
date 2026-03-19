@@ -13,7 +13,8 @@ import type {
   SystemMessage,
   Message,
   Attachment,
-  EncryptedMessage
+  EncryptedMessage,
+  NetworkInfoResponse
 } from '../types';
 
 interface EncryptedAttachmentData extends Attachment {
@@ -57,6 +58,7 @@ function RoomPage({
   const [showLeaveConfirm, setShowLeaveConfirm] = useState<boolean>(false);
   const [fingerprint, setFingerprint] = useState<string>('');
   const [serverUrl, setServerUrl] = useState<string>('');
+  const [networkCandidates, setNetworkCandidates] = useState<NonNullable<NetworkInfoResponse['candidates']>>([]);
   const [copiedRoomCode, setCopiedRoomCode] = useState<boolean>(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -106,6 +108,27 @@ function RoomPage({
       url: URL.createObjectURL(decrypted.blob),
       revokeAfterUse: true,
     };
+  }
+
+  async function hydrateAttachmentMetadata(
+    attachment?: EncryptedAttachmentData
+  ): Promise<EncryptedAttachmentData | undefined> {
+    if (!attachment || !attachment.encrypted || !attachment.metadata) {
+      return attachment;
+    }
+
+    try {
+      const metadata = await encryption.decryptFileMetadata(attachment.metadata);
+      return {
+        ...attachment,
+        filename: metadata.name,
+        mimetype: metadata.type || attachment.mimetype,
+        size: metadata.size ?? attachment.size,
+      };
+    } catch (error) {
+      console.error('Failed to decrypt attachment metadata:', error);
+      return attachment;
+    }
   }
 
   function isSystemMessage(msg: Message): msg is SystemMessage {
@@ -254,8 +277,14 @@ function RoomPage({
 
       fetch('/api/network-info')
         .then(res => res.json())
-        .then(data => setServerUrl(data.url))
-        .catch(() => setServerUrl(window.location.origin));
+        .then((data: NetworkInfoResponse) => {
+          setServerUrl(data.url || window.location.origin);
+          setNetworkCandidates(data.candidates || []);
+        })
+        .catch(() => {
+          setServerUrl(window.location.origin);
+          setNetworkCandidates([]);
+        });
     };
 
     initRoomMetadata();
@@ -267,11 +296,17 @@ function RoomPage({
     const handleRoomData = async ({
       members: roomMembers,
       memberKeys,
-      encryptedMessages
+      encryptedMessages,
+      wrappedRoomKey,
+      wrappedRoomKeyIv,
+      keySenderUsername,
     }: {
       members: string[];
       memberKeys: Record<string, string>;
       encryptedMessages: EncryptedMessage[];
+      wrappedRoomKey?: string | null;
+      wrappedRoomKeyIv?: string | null;
+      keySenderUsername?: string | null;
     }) => {
       if (!active) {
         return;
@@ -280,6 +315,15 @@ function RoomPage({
       setMembers(roomMembers);
 
       try {
+        if (wrappedRoomKey && wrappedRoomKeyIv && keySenderUsername && !encryption.hasRoomKey()) {
+          const senderPublicKey = memberKeys[keySenderUsername];
+          if (senderPublicKey) {
+            await encryption.restoreRoomKey(senderPublicKey, wrappedRoomKey, wrappedRoomKeyIv);
+          }
+        } else if (!encryption.hasRoomKey()) {
+          await encryption.setLegacyRoomKey(roomCode, Object.values(memberKeys));
+        }
+
         await onUpdateRoomKey(memberKeys);
       } catch (error) {
         console.error('Failed to refresh room key:', error);
@@ -287,9 +331,10 @@ function RoomPage({
 
       const decrypted = await Promise.all(
         encryptedMessages.map(async (msg: EncryptedMessage) => {
+          const attachment = await hydrateAttachmentMetadata(msg.attachment as EncryptedAttachmentData | undefined);
+
           try {
             const text = await encryption.decrypt(msg.encryptedData, msg.iv);
-            const attachment = msg.attachment as EncryptedAttachmentData | undefined;
 
             return {
               ...msg,
@@ -299,7 +344,6 @@ function RoomPage({
             } as MessageWithAttachment;
           } catch (error) {
             console.error('Failed to decrypt message:', error);
-            const attachment = msg.attachment as EncryptedAttachmentData | undefined;
 
             return {
               ...msg,
@@ -331,7 +375,7 @@ function RoomPage({
           return;
         }
 
-        const attachment = msg.attachment as EncryptedAttachmentData | undefined;
+        const attachment = await hydrateAttachmentMetadata(msg.attachment as EncryptedAttachmentData | undefined);
 
         setMessages(prev => [...prev, {
           ...msg,
@@ -443,6 +487,11 @@ function RoomPage({
     };
   }, []);
 
+  const preferredJoinUrl =
+    serverUrl ||
+    networkCandidates.find((candidate) => candidate.recommended)?.url ||
+    window.location.origin;
+
   return (
     <div className="page room-page">
       <div className="room-shell">
@@ -543,20 +592,36 @@ function RoomPage({
                 <span className="info-label">Mobile join</span>
                 <div className="room-qr-card">
                   <QRCodeCanvas
-                    value={`${serverUrl || window.location.origin}/?room=${roomCode}`}
+                    value={`${preferredJoinUrl}/?room=${roomCode}`}
                     size={156}
                     level={'H'}
                     marginSize={2}
                   />
                 </div>
                 <small className="room-footnote">
-                  Scan from a phone on the same Wi-Fi or hotspot. The room link stays local.
+                  Scan from a phone on the same Wi-Fi, hotspot, or LAN. The join link stays on your local network.
                 </small>
               </div>
+              {networkCandidates.length > 0 && (
+                <div className="info-row room-network-row">
+                  <span className="info-label">Local addresses</span>
+                  <div className="room-network-list">
+                    {networkCandidates.map((candidate) => (
+                      <div key={`${candidate.name}-${candidate.ip}`} className="room-network-card">
+                        <div className="room-network-card__meta">
+                          <span className="network-candidate-name">{candidate.name}</span>
+                          {candidate.recommended && <span className="network-candidate-badge">Recommended</span>}
+                        </div>
+                        <code>{candidate.url}</code>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="room-summary-grid">
                 <div className="room-summary-card">
                   <span className="room-summary-label">Transport</span>
-                  <span className="room-summary-value">Local network only</span>
+                  <span className="room-summary-value">Same Wi-Fi, hotspot, or LAN</span>
                 </div>
                 <div className="room-summary-card">
                   <span className="room-summary-label">Access</span>
@@ -577,7 +642,7 @@ function RoomPage({
               </div>
               <div className="security-note">
                 <span className="note-icon">ℹ</span>
-                The server relays encrypted payloads and room state. It cannot read message contents.
+                The server relays encrypted payloads and room state. It cannot read message contents, and the owner still decides who gets in.
               </div>
             </div>
           </div>

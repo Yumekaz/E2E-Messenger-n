@@ -80,39 +80,42 @@ class FileService {
    * Save file metadata to database (with encryption support)
    */
   saveFileMetadata(roomId, userId, username, file, encryptionInfo = {}) {
-    const { encrypted, iv, metadata, originalName, originalType, originalSize } = encryptionInfo;
+    const { encrypted, iv, metadata } = encryptionInfo;
+    const storedFilename = file.originalname;
+    const storedMimetype = encrypted ? 'application/octet-stream' : file.mimetype;
+    const storedSize = file.size;
 
     const attachment = db.createAttachment(
       roomId,
       userId,
       username,
-      encrypted ? originalName : file.originalname,
+      storedFilename,
       file.filename,
-      encrypted ? 'application/octet-stream' : file.mimetype,
-      file.size,
+      storedMimetype,
+      storedSize,
       {
         encrypted: encrypted || false,
         iv: iv || null,
         metadata: metadata || null,
-        originalName: originalName || null,
-        originalType: originalType || null,
-        originalSize: originalSize || null,
+        originalName: null,
+        originalType: null,
+        originalSize: null,
       }
     );
 
     logger.info('File uploaded', { 
       attachmentId: attachment.id, 
       roomId, 
-      filename: encrypted ? originalName : file.originalname,
+      filename: file.originalname,
       encrypted: encrypted || false,
     });
 
     return {
       id: attachment.id,
-      filename: encrypted ? originalName : attachment.filename,
+      filename: attachment.filename,
       url: `/api/files/${attachment.id}`,
-      mimetype: encrypted ? originalType : attachment.mimetype,
-      size: encrypted ? originalSize : attachment.size,
+      mimetype: attachment.mimetype,
+      size: attachment.size,
       encrypted: encrypted || false,
       iv: iv || null,
       metadata: metadata || null,

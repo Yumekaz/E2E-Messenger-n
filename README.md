@@ -26,18 +26,18 @@ Private group messaging over the **same Wi-Fi, hotspot, or LAN** with **end-to-e
 ### Private local communication
 - **No internet required** - Devices talk over the same Wi-Fi, hotspot, or LAN
 - **Owner-approved rooms** - The room owner decides who can join
-- **Not discoverable outside the local network** - People off-network cannot see or request the room
+- **Local-network boundary enforced** - HTTP and socket traffic are rejected when they come from outside the local network
 
 ### Encryption and access
 - **End-to-end encryption** - AES-256-GCM + ECDH P-256 key exchange
-- **Encrypted file sharing** - Files are encrypted before upload and shared inside the room
+- **Encrypted file sharing** - File bytes and file metadata are encrypted before upload and shared inside the room
 - **JWT authentication** - Access tokens (15 min) + refresh tokens (7 days) with rotation
 - **Ephemeral rooms** - When the owner leaves, the room and its data are removed
 
 ### Mobile and same-network access
 - **QR Code Joining** - Scan to join rooms instantly
 - **Multiple local join addresses** - If one LAN IP is wrong for a phone or laptop, the room shows fallback local addresses you can copy instead
-- **Self-Signed HTTPS** - Built-in HTTPS server for secure mobile access
+- **Optional local HTTPS** - A self-signed HTTPS server can help on phones that require a secure context, but browser/device policies still vary
 - **Mixed Mode** - Supports both Auth-based and Legacy (username-only) users
 
 ### 🛠️ Developer Experience
@@ -62,7 +62,7 @@ npm run install-all # Install client deps
 npm run build       # Build React frontend
 ```
 
-#### 2. Generate SSL Certificates (Required for Mobile)
+#### 2. Generate SSL Certificates (Optional, but useful for Mobile)
 ```bash
 mkdir ssl
 openssl req -x509 -newkey rsa:2048 -keyout ssl/key.pem -out ssl/cert.pem -days 365 -nodes -subj "/CN=MAJA"
@@ -79,7 +79,7 @@ npm run start:legacy # Starts legacy server (No Auth, just E2E)
 | Device | URL |
 |--------|-----|
 | 💻 PC | `http://localhost:3000` |
-| 📱 Phone | `https://YOUR_PC_IP:3443` |
+| 📱 Phone | `http://YOUR_PC_IP:3000` or `https://YOUR_PC_IP:3443` if your browser requires a secure context |
 
 ---
 
@@ -94,8 +94,9 @@ npm run start:legacy # Starts legacy server (No Auth, just E2E)
 ## What This Does Not Do
 
 - It does **not** work across the public internet.
-- People outside your local network cannot discover or join your room.
+- People outside your local network are blocked from reaching the host.
 - `Offline` in this project means **no internet required**, not **no local network at all**.
+- Automated tests prove loopback and browser flows well, but real phone-on-hotspot behavior should still be verified on actual devices.
 
 ---
 

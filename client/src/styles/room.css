@@ -153,7 +153,10 @@
   gap: 14px;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: 20px;
+  padding-bottom: 168px;
+  padding-top: 12px;
+  scroll-padding-bottom: 168px;
+  scroll-padding-top: 24px;
 }
 
 .encryption-banner,
@@ -520,6 +523,26 @@
   gap: 6px;
 }
 
+.network-candidate-name {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.network-candidate-badge {
+  background: rgba(29, 118, 103, 0.12);
+  border: 1px solid rgba(29, 118, 103, 0.12);
+  border-radius: 999px;
+  color: var(--accent-primary);
+  display: inline-flex;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+  width: fit-content;
+}
+
 .encryption-type {
   color: var(--accent-primary);
   font-weight: 600;
@@ -750,6 +773,10 @@
 
   .message {
     max-width: 100%;
+  }
+
+  .messages-container {
+    padding-bottom: 212px;
   }
 
   .composer-surface {

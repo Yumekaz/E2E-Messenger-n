@@ -18,15 +18,18 @@ function serializeAttachmentRecord(record, attachmentId = record?.id) {
     return null;
   }
 
+  const filename = record.filename;
+  const mimetype =
+    inferMimeTypeFromName(record.filename) ||
+    record.mimetype;
+  const size = record.size;
+
   return {
     id: attachmentId,
-    filename: record.original_name || record.filename,
+    filename,
     url: `/api/files/${attachmentId}`,
-    mimetype:
-      record.original_type ||
-      inferMimeTypeFromName(record.original_name || record.filename) ||
-      record.mimetype,
-    size: record.original_size || record.size,
+    mimetype,
+    size,
     encrypted: Boolean(record.encrypted),
     iv: record.attachment_iv ?? record.iv ?? null,
     metadata: record.metadata ?? null,

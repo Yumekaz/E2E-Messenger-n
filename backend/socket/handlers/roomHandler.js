@@ -31,6 +31,38 @@ function createRoomHandler(io, socket, state) {
     socket.emit('room-created', room);
   });
 
+  socket.on('sync-room-key', ({ roomId, wrappedRoomKey, wrappedRoomKeyIv, keySenderUsername }) => {
+    const user = users.get(socket.id);
+    if (!user) {
+      socket.emit('error', { message: 'Not registered' });
+      return;
+    }
+
+    const dbRoom = db.getRoomById(roomId);
+    if (!dbRoom) {
+      socket.emit('error', { message: 'Room not found' });
+      return;
+    }
+
+    if (!db.isRoomMember(roomId, user.username)) {
+      socket.emit('error', { message: 'Not a member' });
+      return;
+    }
+
+    if (!wrappedRoomKey || !wrappedRoomKeyIv || keySenderUsername !== user.username) {
+      socket.emit('error', { message: 'Invalid room key payload' });
+      return;
+    }
+
+    db.setRoomMemberKeyMaterial(
+      roomId,
+      user.username,
+      wrappedRoomKey,
+      wrappedRoomKeyIv,
+      keySenderUsername
+    );
+  });
+
   /**
    * Request to join room
    */
@@ -51,9 +83,23 @@ function createRoomHandler(io, socket, state) {
       return;
     }
 
-    // Check if already a member (via database)
+    // Existing members should be able to re-enter via room code after reconnect/reload.
     if (db.isRoomMember(dbRoom.room_id, user.username)) {
-      socket.emit('error', { message: 'Already in room' });
+      socket.join(dbRoom.room_id);
+      socketToRooms.get(socket.id)?.add(dbRoom.room_id);
+
+      const { memberKeys } = buildMemberSnapshot(dbRoom.room_id);
+      const roomMember = db.getRoomMember(dbRoom.room_id, user.username);
+
+      socket.emit('join-approved', {
+        roomId: dbRoom.room_id,
+        roomCode: dbRoom.room_code,
+        roomType: dbRoom.room_type || 'legacy',
+        memberKeys,
+        wrappedRoomKey: roomMember?.wrapped_room_key || null,
+        wrappedRoomKeyIv: roomMember?.wrapped_room_key_iv || null,
+        keySenderUsername: roomMember?.key_sender_username || null,
+      });
       return;
     }
 
@@ -114,22 +160,45 @@ function createRoomHandler(io, socket, state) {
   /**
    * Approve join request
    */
-  socket.on('approve-join', ({ requestId }) => {
+  socket.on('approve-join', (
+    { requestId, wrappedRoomKey, wrappedRoomKeyIv, keySenderUsername },
+    callback = () => {}
+  ) => {
     const request = joinRequests.get(requestId);
-    if (!request) return;
+    if (!request) {
+      callback({ ok: false, message: 'Join request expired' });
+      return;
+    }
 
     // Verify the approver is the room owner (via database)
     const user = users.get(socket.id);
-    if (!user) return;
+    if (!user) {
+      callback({ ok: false, message: 'Not registered' });
+      return;
+    }
 
     const dbRoom = db.getRoomById(request.roomId);
     if (!dbRoom || dbRoom.owner_username !== user.username) {
       socket.emit('error', { message: 'Not authorized to approve' });
+      callback({ ok: false, message: 'Not authorized to approve' });
+      return;
+    }
+
+    if (!wrappedRoomKey || !wrappedRoomKeyIv || keySenderUsername !== user.username) {
+      socket.emit('error', { message: 'Missing room key material for approved member' });
+      callback({ ok: false, message: 'Missing room key material for approved member' });
       return;
     }
 
     // Persist membership to database
     db.addRoomMember(request.roomId, request.userId, request.username);
+    db.setRoomMemberKeyMaterial(
+      request.roomId,
+      request.username,
+      wrappedRoomKey,
+      wrappedRoomKeyIv,
+      keySenderUsername
+    );
 
     // Get the requester's socket
     const requesterSocket = io.sockets.sockets.get(request.socketId);
@@ -144,6 +213,9 @@ function createRoomHandler(io, socket, state) {
         roomCode: request.roomCode || dbRoom.room_code,
         roomType: dbRoom.room_type || 'legacy',
         memberKeys,
+        wrappedRoomKey,
+        wrappedRoomKeyIv,
+        keySenderUsername,
       });
 
       socket.to(request.roomId).emit('member-joined', {
@@ -154,6 +226,9 @@ function createRoomHandler(io, socket, state) {
       emitMembersUpdate(io, request.roomId);
 
       logger.info('Join approved', { username: request.username, roomId: request.roomId });
+      callback({ ok: true });
+    } else {
+      callback({ ok: false, message: 'Requester is no longer connected' });
     }
 
     joinRequests.delete(requestId);
@@ -229,10 +304,15 @@ function createRoomHandler(io, socket, state) {
     const dbMessages = db.getRoomMessages(roomId);
     const encryptedMessages = dbMessages.map(serializeSocketMessage);
 
+    const roomMember = db.getRoomMember(roomId, user.username);
+
     socket.emit('room-data', {
       members,
       memberKeys,
       encryptedMessages,
+      wrappedRoomKey: roomMember?.wrapped_room_key || null,
+      wrappedRoomKeyIv: roomMember?.wrapped_room_key_iv || null,
+      keySenderUsername: roomMember?.key_sender_username || null,
     });
 
     logger.debug('User joined room', { username: user.username, roomId });

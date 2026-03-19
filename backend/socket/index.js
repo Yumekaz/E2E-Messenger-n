@@ -4,12 +4,14 @@
  */
 
 const db = require('../database/db');
+const config = require('../config');
 const logger = require('../utils/logger');
 const { authenticateSocket } = require('../middleware/auth');
 const authService = require('../services/authService');
 const createMessageHandler = require('./handlers/messageHandler');
 const createRoomHandler = require('./handlers/roomHandler');
 const { emitMembersUpdate } = require('../utils/roomMembers');
+const { evaluateLocalNetworkAccess } = require('../utils/localNetwork');
 
 /**
  * Shared state between socket handlers
@@ -27,6 +29,33 @@ const state = {
  * Setup Socket.IO handlers
  */
 function setupSocketHandlers(io) {
+  io.use((socket, next) => {
+    if (!config.network.localOnly) {
+      next();
+      return;
+    }
+
+    const forwardedAddress = config.network.trustProxy
+      ? socket.handshake.headers['x-forwarded-for']
+      : null;
+    const access = evaluateLocalNetworkAccess(forwardedAddress || socket.handshake.address);
+
+    if (access.allowed) {
+      socket.localNetwork = access;
+      next();
+      return;
+    }
+
+    logger.warn('Rejected non-local socket connection', {
+      socketId: socket.id,
+      remoteAddress: access.normalizedAddress || socket.handshake.address,
+    });
+
+    const error = new Error('Local network access only. Connect from the same Wi-Fi, hotspot, or LAN.');
+    error.data = { code: 'LOCAL_NETWORK_ONLY' };
+    next(error);
+  });
+
   // Authentication middleware
   io.use(authenticateSocket);
 
@@ -133,24 +162,10 @@ function setupSocketHandlers(io) {
       const user = state.users.get(socket.id);
       if (!user) return;
 
-      // Leave all rooms
+      // Transient network loss should not destroy persisted room state.
       const userRooms = state.socketToRooms.get(socket.id) || new Set();
       for (const roomId of userRooms) {
-        const room = db.getRoomById(roomId);
-        if (!room) {
-          continue;
-        }
-
-        if (room.owner_username === user.username) {
-          db.deleteRoom(roomId);
-          io.to(roomId).emit('room-closed');
-          logger.info('Room closed (owner disconnect)', { roomId });
-          continue;
-        }
-
-        if (db.isRoomMember(roomId, user.username)) {
-          db.removeRoomMember(roomId, user.username);
-          io.to(roomId).emit('member-left', { username: user.username });
+        if (db.getRoomById(roomId)) {
           emitMembersUpdate(io, roomId);
         }
       }

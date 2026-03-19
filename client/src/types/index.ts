@@ -161,6 +161,12 @@ export interface RequestIdPayload {
   requestId: string;
 }
 
+export interface WrappedRoomKeyPayload {
+  wrappedRoomKey: string;
+  wrappedRoomKeyIv: string;
+  keySenderUsername: string;
+}
+
 export interface SendEncryptedMessagePayload {
   roomId: string;
   encryptedData: string;
@@ -184,12 +190,18 @@ export interface JoinApprovedPayload {
   roomCode: string;
   roomType?: RoomType;
   memberKeys: Record<string, string>;
+  wrappedRoomKey?: string | null;
+  wrappedRoomKeyIv?: string | null;
+  keySenderUsername?: string | null;
 }
 
 export interface RoomDataPayload {
   members: string[];
   memberKeys: Record<string, string>;
   encryptedMessages: EncryptedMessage[];
+  wrappedRoomKey?: string | null;
+  wrappedRoomKeyIv?: string | null;
+  keySenderUsername?: string | null;
 }
 
 export interface MembersUpdatePayload {
@@ -214,13 +226,14 @@ export interface ClientToServerEvents {
   register: (data: SocketRegistrationPayload) => void;
   'create-room': () => void;
   'request-join': (data: RoomCodePayload) => void;
-  'approve-join': (data: RequestIdPayload) => void;
+  'approve-join': (data: RequestIdPayload & WrappedRoomKeyPayload) => void;
   'deny-join': (data: RequestIdPayload) => void;
   'join-room': (data: RoomIdPayload) => void;
   'leave-room': (data: RoomIdPayload) => void;
   'send-encrypted-message': (data: SendEncryptedMessagePayload) => void;
   typing: (data: RoomIdPayload) => void;
   'request-upload-token': () => void;
+  'sync-room-key': (data: RoomIdPayload & WrappedRoomKeyPayload) => void;
 }
 
 export interface ServerToClientEvents {
@@ -260,11 +273,16 @@ export interface DecryptedFileResult {
 export interface RoomEncryptionInterface {
   initialize(): Promise<string>;
   publicKeyExported: string | null;
-  setRoomKey(roomCode: string, memberKeys: string[]): Promise<void>;
+  hasRoomKey(): boolean;
+  createRoomKey(): Promise<void>;
+  setLegacyRoomKey(roomCode: string, memberKeys: string[]): Promise<void>;
+  wrapRoomKeyForMember(memberPublicKey: string): Promise<{ wrappedRoomKey: string; wrappedRoomKeyIv: string }>;
+  restoreRoomKey(senderPublicKey: string, wrappedRoomKey: string, wrappedRoomKeyIv: string): Promise<void>;
   encrypt(plaintext: string): Promise<EncryptionResult>;
   decrypt(encryptedData: string, iv: string): Promise<string | null>;
   encryptFile(file: File): Promise<{ blob: Blob; iv: string; metadata: string }>;
   decryptFile(encryptedBlob: Blob, iv: string, encryptedMetadata: string): Promise<DecryptedFileResult>;
+  decryptFileMetadata(encryptedMetadata: string): Promise<{ name: string; type: string; size: number }>;
   getFingerprint(): Promise<string>;
 }
 
@@ -324,7 +342,7 @@ export interface ConfirmModalProps {
 
 export interface JoinRequestModalProps {
   requests: JoinRequest[];
-  onApprove: (data: { requestId: string }) => void;
+  onApprove: (data: { requestId: string }) => Promise<void> | void;
   onDeny: (requestId: string) => void;
 }
 

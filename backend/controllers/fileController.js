@@ -17,10 +17,36 @@ class FileController {
    * Upload a file (plain or encrypted)
    */
   async upload(req, res, next) {
+    const forwardUploadError = (error) => {
+      if (req.readableEnded || req.complete) {
+        next(error);
+        return;
+      }
+
+      let settled = false;
+      const finalize = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        req.off('end', finalize);
+        req.off('close', finalize);
+        req.off('error', finalize);
+        next(error);
+      };
+
+      req.on('end', finalize);
+      req.on('close', finalize);
+      req.on('error', finalize);
+      req.resume();
+    };
+
     // Use multer middleware
     fileService.getUploadMiddleware()(req, res, async (err) => {
       if (err) {
-        return next(err);
+        forwardUploadError(err);
+        return;
       }
 
       try {
@@ -28,7 +54,7 @@ class FileController {
           throw new ValidationError('No file uploaded');
         }
 
-        const { roomId, encrypted, iv, metadata, originalName, originalType, originalSize } = req.body;
+        const { roomId, encrypted, iv, metadata } = req.body;
 
         if (!roomId) {
           throw new ValidationError('Room ID is required');
@@ -49,9 +75,6 @@ class FileController {
             encrypted: encrypted === 'true',
             iv: iv || null,
             metadata: metadata || null,
-            originalName: originalName || null,
-            originalType: originalType || null,
-            originalSize: originalSize ? parseInt(originalSize) : null,
           }
         );
 
@@ -130,13 +153,13 @@ class FileController {
       res.json({
         attachments: attachments.map(a => ({
           id: a.id,
-          filename: a.encrypted ? a.original_name : a.filename,
+          filename: a.filename,
           url: `/api/files/${a.id}`,
-          mimetype: a.encrypted ? a.original_type : a.mimetype,
-          size: a.encrypted ? a.original_size : a.size,
+          mimetype: a.mimetype,
+          size: a.size,
           uploadedBy: a.username,
           createdAt: a.created_at,
-          isImage: a.encrypted ? fileService.isImage(a.original_type) : fileService.isImage(a.mimetype),
+          isImage: fileService.isImage(a.mimetype),
           encrypted: a.encrypted || false,
           iv: a.iv || null,
           metadata: a.metadata || null,

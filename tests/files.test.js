@@ -6,13 +6,14 @@
 const request = require('supertest');
 const path = require('path');
 const fs = require('fs');
-const { API_URL } = require('./helpers/api');
+const { getApiUrl } = require('./helpers/api');
 const { buildIdentity } = require('./helpers/identity');
 
 describe('File Upload API', () => {
   let accessToken;
   let roomId;
   let uploadedFileId;
+  let encryptedFileId;
 
   const testFilePath = path.join(__dirname, 'test-file.txt');
   const testImagePath = path.join(__dirname, 'test-image.png');
@@ -34,14 +35,14 @@ describe('File Upload API', () => {
     ]);
     fs.writeFileSync(testImagePath, minimalPNG);
 
-    const regRes = await request(API_URL)
+    const regRes = await request(getApiUrl())
       .post('/api/auth/register')
       .send(buildIdentity('fileuser'));
 
     expect(regRes.status).toBe(201);
     accessToken = regRes.body.accessToken;
 
-    const roomRes = await request(API_URL)
+    const roomRes = await request(getApiUrl())
       .post('/api/rooms')
       .set('Authorization', `Bearer ${accessToken}`);
 
@@ -61,7 +62,7 @@ describe('File Upload API', () => {
 
   describe('POST /api/files/upload', () => {
     it('should upload a text file', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${accessToken}`)
         .field('roomId', roomId)
@@ -80,7 +81,7 @@ describe('File Upload API', () => {
     });
 
     it('should upload an image file', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${accessToken}`)
         .field('roomId', roomId)
@@ -90,8 +91,34 @@ describe('File Upload API', () => {
       expect(res.body.attachment.mimetype).toBe('image/png');
     });
 
+    it('should ignore plaintext metadata fields for encrypted uploads', async () => {
+      const encryptedPayload = Buffer.from(`encrypted-file-${Date.now()}`);
+      const encryptedMetadata = JSON.stringify({ encryptedData: 'ciphertext', iv: 'metadata-iv' });
+
+      const res = await request(getApiUrl())
+        .post('/api/files/upload')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .field('roomId', roomId)
+        .field('encrypted', 'true')
+        .field('iv', 'file-iv')
+        .field('metadata', encryptedMetadata)
+        .field('originalName', 'secret-document.pdf')
+        .field('originalType', 'application/pdf')
+        .field('originalSize', '12345')
+        .attach('file', encryptedPayload, 'encrypted.enc');
+
+      expect(res.status).toBe(201);
+      expect(res.body.attachment.encrypted).toBe(true);
+      expect(res.body.attachment.filename).toBe('encrypted.enc');
+      expect(res.body.attachment.mimetype).toBe('application/octet-stream');
+      expect(res.body.attachment.size).toBe(encryptedPayload.length);
+      expect(res.body.attachment.metadata).toBe(encryptedMetadata);
+
+      encryptedFileId = res.body.attachment.id;
+    });
+
     it('should reject upload without authentication', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .field('roomId', roomId)
         .attach('file', testFilePath);
@@ -100,7 +127,7 @@ describe('File Upload API', () => {
     });
 
     it('should reject upload without roomId', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${accessToken}`)
         .attach('file', testFilePath);
@@ -109,7 +136,7 @@ describe('File Upload API', () => {
     });
 
     it('should reject upload without file', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${accessToken}`)
         .field('roomId', roomId);
@@ -118,7 +145,7 @@ describe('File Upload API', () => {
     });
 
     it('should reject upload for non-member room', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${accessToken}`)
         .field('roomId', 'non-existent-room')
@@ -132,7 +159,7 @@ describe('File Upload API', () => {
     it('should stream the uploaded file', async () => {
       expect(uploadedFileId).toBeDefined();
 
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/files/${uploadedFileId}`)
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -142,7 +169,7 @@ describe('File Upload API', () => {
     });
 
     it('should reject for non-existent file', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/files/999999')
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -152,7 +179,7 @@ describe('File Upload API', () => {
 
   describe('GET /api/files/room/:roomId', () => {
     it('should get all files in room', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/files/room/${roomId}`)
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -162,16 +189,23 @@ describe('File Upload API', () => {
 
       const uploadedFile = res.body.attachments.find((file) => file.id === uploadedFileId);
       expect(uploadedFile).toBeDefined();
+
+      const encryptedFile = res.body.attachments.find((file) => file.id === encryptedFileId);
+      expect(encryptedFile).toBeDefined();
+      expect(encryptedFile.filename).toBe('encrypted.enc');
+      expect(encryptedFile.mimetype).toBe('application/octet-stream');
+      expect(encryptedFile.size).toBeGreaterThan(0);
+      expect(encryptedFile.metadata).toBeDefined();
     });
 
     it('should reject for non-member', async () => {
-      const regRes = await request(API_URL)
+      const regRes = await request(getApiUrl())
         .post('/api/auth/register')
         .send(buildIdentity('filenon'));
 
       expect(regRes.status).toBe(201);
 
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/files/room/${roomId}`)
         .set('Authorization', `Bearer ${regRes.body.accessToken}`);
 
@@ -185,14 +219,14 @@ describe('File Validation', () => {
   let roomId;
 
   beforeAll(async () => {
-    const regRes = await request(API_URL)
+    const regRes = await request(getApiUrl())
       .post('/api/auth/register')
       .send(buildIdentity('fileval'));
 
     expect(regRes.status).toBe(201);
     accessToken = regRes.body.accessToken;
 
-    const roomRes = await request(API_URL)
+    const roomRes = await request(getApiUrl())
       .post('/api/rooms')
       .set('Authorization', `Bearer ${accessToken}`);
 
@@ -207,7 +241,7 @@ describe('File Validation', () => {
       const largeBuffer = Buffer.alloc(11 * 1024 * 1024, 'x');
       fs.writeFileSync(largeFilePath, largeBuffer);
 
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${accessToken}`)
         .field('roomId', roomId)
@@ -226,7 +260,7 @@ describe('File Validation', () => {
     fs.writeFileSync(invalidFilePath, 'fake executable content');
 
     try {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/files/upload')
         .set('Authorization', `Bearer ${accessToken}`)
         .field('roomId', roomId)

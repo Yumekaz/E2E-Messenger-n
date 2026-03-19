@@ -4,7 +4,7 @@
  */
 
 const request = require('supertest');
-const { API_URL } = require('./helpers/api');
+const { getApiUrl } = require('./helpers/api');
 const { buildIdentity } = require('./helpers/identity');
 
 describe('Room API', () => {
@@ -15,14 +15,14 @@ describe('Room API', () => {
   beforeAll(async () => {
     const identity = buildIdentity('roomuser');
 
-    const regRes = await request(API_URL)
+    const regRes = await request(getApiUrl())
       .post('/api/auth/register')
       .send(identity);
 
     expect(regRes.status).toBe(201);
     accessToken = regRes.body.accessToken;
 
-    const roomRes = await request(API_URL)
+    const roomRes = await request(getApiUrl())
       .post('/api/rooms')
       .set('Authorization', `Bearer ${accessToken}`);
 
@@ -33,7 +33,7 @@ describe('Room API', () => {
 
   describe('POST /api/rooms', () => {
     it('should create a new room when authenticated', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/rooms')
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -46,14 +46,14 @@ describe('Room API', () => {
     });
 
     it('should reject room creation without token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/rooms');
 
       expect(res.status).toBe(401);
     });
 
     it('should reject room creation with invalid token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/rooms')
         .set('Authorization', 'Bearer invalid-token');
 
@@ -63,7 +63,7 @@ describe('Room API', () => {
 
   describe('GET /api/rooms/my-rooms', () => {
     it('should return user rooms', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/rooms/my-rooms')
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -76,7 +76,7 @@ describe('Room API', () => {
     });
 
     it('should reject without authentication', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/rooms/my-rooms');
 
       expect(res.status).toBe(401);
@@ -85,7 +85,7 @@ describe('Room API', () => {
 
   describe('GET /api/rooms/code/:roomCode', () => {
     it('should return room by code', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/rooms/code/${roomCode}`)
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -95,7 +95,7 @@ describe('Room API', () => {
     });
 
     it('should return 404 for non-existent room', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/rooms/code/ZZZZZZ')
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -105,7 +105,7 @@ describe('Room API', () => {
 
   describe('GET /api/rooms/:roomId/members', () => {
     it('should return room members', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/rooms/${roomId}/members`)
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -115,13 +115,13 @@ describe('Room API', () => {
     });
 
     it('should reject for non-members', async () => {
-      const regRes = await request(API_URL)
+      const regRes = await request(getApiUrl())
         .post('/api/auth/register')
         .send(buildIdentity('nonmemb'));
 
       expect(regRes.status).toBe(201);
 
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/rooms/${roomId}/members`)
         .set('Authorization', `Bearer ${regRes.body.accessToken}`);
 
@@ -131,7 +131,7 @@ describe('Room API', () => {
 
   describe('GET /api/rooms/:roomId/messages', () => {
     it('should return room messages', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/rooms/${roomId}/messages`)
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -141,7 +141,7 @@ describe('Room API', () => {
     });
 
     it('should support limit parameter', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get(`/api/rooms/${roomId}/messages?limit=10`)
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -152,13 +152,13 @@ describe('Room API', () => {
 
   describe('DELETE /api/rooms/:roomId', () => {
     it('should delete room when owner', async () => {
-      const createRes = await request(API_URL)
+      const createRes = await request(getApiUrl())
         .post('/api/rooms')
         .set('Authorization', `Bearer ${accessToken}`);
 
       expect(createRes.status).toBe(201);
 
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .delete(`/api/rooms/${createRes.body.room.roomId}`)
         .set('Authorization', `Bearer ${accessToken}`);
 
@@ -167,13 +167,13 @@ describe('Room API', () => {
     });
 
     it('should reject deletion by non-owner', async () => {
-      const regRes = await request(API_URL)
+      const regRes = await request(getApiUrl())
         .post('/api/auth/register')
         .send(buildIdentity('deleter'));
 
       expect(regRes.status).toBe(201);
 
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .delete(`/api/rooms/${roomId}`)
         .set('Authorization', `Bearer ${regRes.body.accessToken}`);
 

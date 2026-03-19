@@ -1,7 +1,8 @@
-const { readServerState } = require('./testServer');
-
-const API_URL = process.env.TEST_API_URL || readServerState().apiUrl;
+const { getApiUrl } = require('./runtimeServer');
 
 module.exports = {
-  API_URL,
+  getApiUrl,
+  get API_URL() {
+    return getApiUrl();
+  },
 };

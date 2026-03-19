@@ -100,9 +100,6 @@ class FileService {
       formData.append('iv', encryptedData.iv);
       formData.append('metadata', encryptedData.metadata);
       formData.append('encrypted', 'true');
-      formData.append('originalName', file.name);
-      formData.append('originalType', file.type);
-      formData.append('originalSize', file.size.toString());
     } else {
       // Upload plain file
       formData.append('file', file);

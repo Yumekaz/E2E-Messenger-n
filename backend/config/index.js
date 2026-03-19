@@ -9,6 +9,7 @@ const config = {
   // Server
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT, 10) || 3000,
+  host: process.env.HOST_BIND || '0.0.0.0',
   isProduction: process.env.NODE_ENV === 'production',
 
   // JWT
@@ -45,6 +46,11 @@ const config = {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000, // 15 minutes
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
     authMaxRequests: parseInt(process.env.AUTH_RATE_LIMIT_MAX, 10) || 5,
+  },
+
+  network: {
+    localOnly: process.env.LOCAL_NETWORK_ONLY !== 'false',
+    trustProxy: process.env.TRUST_PROXY === 'true',
   },
 
   // Bcrypt

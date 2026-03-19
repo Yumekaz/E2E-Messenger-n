@@ -21,7 +21,7 @@ export const socket: TypedSocket = io(SOCKET_URL, {
   autoConnect: true,
   reconnection: true,
   reconnectionDelay: 1000,
-  reconnectionAttempts: 10,
+  reconnectionAttempts: Infinity,
   auth: {
     token: getAuthToken(),
   },

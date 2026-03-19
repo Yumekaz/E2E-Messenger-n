@@ -13,7 +13,10 @@ class RateLimiter {
     this.requests = new Map();
     
     // Cleanup old entries every minute
-    setInterval(() => this.cleanup(), 60000);
+    this.cleanupTimer = setInterval(() => this.cleanup(), 60000);
+    if (typeof this.cleanupTimer.unref === 'function') {
+      this.cleanupTimer.unref();
+    }
   }
 
   /**

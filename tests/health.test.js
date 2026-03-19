@@ -4,12 +4,12 @@
  */
 
 const request = require('supertest');
-const { API_URL } = require('./helpers/api');
+const { getApiUrl } = require('./helpers/api');
 
 describe('Health API', () => {
   describe('GET /api/health', () => {
     it('should return health status', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/health')
         .expect('Content-Type', /json/);
 
@@ -25,7 +25,7 @@ describe('Health API', () => {
 
   describe('GET /api/network-info', () => {
     it('should return network info', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/network-info')
         .expect('Content-Type', /json/);
 
@@ -46,14 +46,14 @@ describe('Health API', () => {
 describe('Error Handling', () => {
   describe('404 Not Found', () => {
     it('should return 404 for non-existent API routes', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/non-existent-endpoint');
 
       expect(res.status).toBe(404);
     });
 
     it('should return JSON error for API 404', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/non-existent-endpoint')
         .expect('Content-Type', /json/);
 
@@ -63,7 +63,7 @@ describe('Error Handling', () => {
 
   describe('Validation Errors', () => {
     it('should return 400 for invalid registration data', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send({
           email: 'invalid-email',
@@ -76,7 +76,7 @@ describe('Error Handling', () => {
     });
 
     it('should return 400 for missing required fields', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send({});
 
@@ -86,7 +86,7 @@ describe('Error Handling', () => {
 
   describe('Authentication Errors', () => {
     it('should return 401 for missing token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/auth/me');
 
       expect(res.status).toBe(401);
@@ -94,7 +94,7 @@ describe('Error Handling', () => {
     });
 
     it('should return 401 for invalid token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/auth/me')
         .set('Authorization', 'Bearer invalid.token.here');
 
@@ -102,7 +102,7 @@ describe('Error Handling', () => {
     });
 
     it('should return 401 for malformed authorization header', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/auth/me')
         .set('Authorization', 'NotBearer token');
 
@@ -113,7 +113,7 @@ describe('Error Handling', () => {
 
 describe('Rate Limiting', () => {
   it('should include rate limit headers', async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/auth/login')
       .send({ email: 'test@test.com', password: 'wrong' });
 
@@ -128,7 +128,7 @@ describe('Rate Limiting', () => {
 
     for (let i = 0; i < 10; i++) {
       attempts.push(
-        request(API_URL)
+        request(getApiUrl())
           .post('/api/auth/login')
           .send({
             email: 'ratelimit@test.com',
@@ -149,7 +149,7 @@ describe('Rate Limiting', () => {
 
 describe('Input Sanitization', () => {
   it('should handle XSS attempts in username', async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/auth/register')
       .send({
         email: `xss${Date.now()}@test.com`,
@@ -165,7 +165,7 @@ describe('Input Sanitization', () => {
   });
 
   it('should handle SQL injection attempts', async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/auth/login')
       .send({
         email: "'; DROP TABLE users; --",
@@ -178,7 +178,7 @@ describe('Input Sanitization', () => {
   it('should handle very long input', async () => {
     const longString = 'a'.repeat(10000);
 
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/auth/register')
       .send({
         email: `long${Date.now()}@test.com`,
@@ -192,14 +192,14 @@ describe('Input Sanitization', () => {
 
 describe('CORS and Headers', () => {
   it('should include security headers', async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .get('/api/health');
 
     expect(res.status).toBe(200);
   });
 
   it('should handle preflight OPTIONS requests', async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .options('/api/auth/login')
       .set('Origin', 'http://localhost:5173')
       .set('Access-Control-Request-Method', 'POST');

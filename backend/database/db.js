@@ -97,6 +97,9 @@ async function initializeDatabase() {
       room_id TEXT NOT NULL,
       user_id INTEGER,
       username TEXT NOT NULL,
+      wrapped_room_key TEXT,
+      wrapped_room_key_iv TEXT,
+      key_sender_username TEXT,
       joined_at TEXT DEFAULT (datetime('now')),
       UNIQUE(room_id, username)
     );
@@ -149,6 +152,10 @@ async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_attachments_room ON attachments(room_id);
   `);
 
+  ensureColumn('room_members', 'wrapped_room_key', 'TEXT');
+  ensureColumn('room_members', 'wrapped_room_key_iv', 'TEXT');
+  ensureColumn('room_members', 'key_sender_username', 'TEXT');
+
   saveDatabase();
   saveInterval = setInterval(saveDatabase, 30000);
 
@@ -157,6 +164,15 @@ async function initializeDatabase() {
 }
 
 // ==================== HELPERS ====================
+
+function ensureColumn(tableName, columnName, definition) {
+  const columns = getAll(`PRAGMA table_info(${tableName})`);
+  const hasColumn = columns.some((column) => column.name === columnName);
+
+  if (!hasColumn) {
+    db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
 
 function runQuery(sql, params = []) {
   db.run(sql, params);
@@ -299,7 +315,8 @@ function createRoom(roomId, roomCode, ownerId, ownerUsername, roomType = 'legacy
     [roomId, roomCode, ownerId, ownerUsername, roomType]
   );
   runQuery(
-    `INSERT INTO room_members (room_id, user_id, username) VALUES (?, ?, ?)`,
+    `INSERT INTO room_members (room_id, user_id, username, wrapped_room_key, wrapped_room_key_iv, key_sender_username)
+     VALUES (?, ?, ?, NULL, NULL, NULL)`,
     [roomId, ownerId, ownerUsername]
   );
   return { roomId, roomCode, ownerId, ownerUsername, roomType };
@@ -320,11 +337,27 @@ function addRoomMember(roomId, userId, username) {
   );
   if (!existing) {
     return runQuery(
-      `INSERT INTO room_members (room_id, user_id, username) VALUES (?, ?, ?)`,
+      `INSERT INTO room_members (room_id, user_id, username, wrapped_room_key, wrapped_room_key_iv, key_sender_username)
+       VALUES (?, ?, ?, NULL, NULL, NULL)`,
       [roomId, userId, username]
     );
   }
   return { changes: 0 };
+}
+
+function setRoomMemberKeyMaterial(
+  roomId,
+  username,
+  wrappedRoomKey,
+  wrappedRoomKeyIv,
+  keySenderUsername
+) {
+  return runQuery(
+    `UPDATE room_members
+     SET wrapped_room_key = ?, wrapped_room_key_iv = ?, key_sender_username = ?
+     WHERE room_id = ? AND username = ?`,
+    [wrappedRoomKey, wrappedRoomKeyIv, keySenderUsername, roomId, username]
+  );
 }
 
 function removeRoomMember(roomId, username) {
@@ -343,11 +376,22 @@ function isRoomMember(roomId, username) {
 
 function getRoomMembers(roomId) {
   return getAll(`
-    SELECT rm.username, u.public_key, u.id as user_id
+    SELECT rm.username, u.public_key, u.id as user_id,
+           rm.wrapped_room_key, rm.wrapped_room_key_iv, rm.key_sender_username
     FROM room_members rm
     LEFT JOIN users u ON rm.username = u.username
     WHERE rm.room_id = ?
   `, [roomId]);
+}
+
+function getRoomMember(roomId, username) {
+  return getOne(`
+    SELECT rm.username, u.public_key, u.id as user_id,
+           rm.wrapped_room_key, rm.wrapped_room_key_iv, rm.key_sender_username
+    FROM room_members rm
+    LEFT JOIN users u ON rm.username = u.username
+    WHERE rm.room_id = ? AND rm.username = ?
+  `, [roomId, username]);
 }
 
 function getUserRooms(username) {
@@ -500,8 +544,10 @@ module.exports = {
   getRoomByCode,
   getRoomById,
   addRoomMember,
+  setRoomMemberKeyMaterial,
   removeRoomMember,
   isRoomMember,
+  getRoomMember,
   getRoomMembers,
   getUserRooms,
   deleteRoom,

@@ -2,8 +2,6 @@ module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.js'],
   modulePaths: ['<rootDir>/client/node_modules'],
-  globalSetup: '<rootDir>/tests/globalSetup.js',
-  globalTeardown: '<rootDir>/tests/globalTeardown.js',
   collectCoverageFrom: [
     'backend/**/*.js',
     '!backend/config/**',
@@ -14,5 +12,5 @@ module.exports = {
   verbose: true,
   testTimeout: 30000,
   maxWorkers: 1, // Run tests serially for API tests
-  setupFilesAfterEnv: [],
+  setupFilesAfterEnv: ['<rootDir>/tests/setupRuntime.js'],
 };

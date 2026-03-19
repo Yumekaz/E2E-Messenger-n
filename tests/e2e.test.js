@@ -6,11 +6,11 @@
 
 const request = require('supertest');
 const { io } = require('socket.io-client');
-const { API_URL } = require('./helpers/api');
+const { getApiUrl } = require('./helpers/api');
 const { buildIdentity } = require('./helpers/identity');
 
 function createAuthenticatedSocket(token) {
-  return io(API_URL, {
+  return io(getApiUrl(), {
     autoConnect: false,
     auth: { token },
   });
@@ -66,7 +66,7 @@ describe('E2E: Complete User Flow', () => {
   describe('Step 1: User Registration', () => {
     it('should register User A', async () => {
       const identity = buildIdentity('usera', 'test.com');
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send({
           email: userA.email || identity.email,
@@ -84,7 +84,7 @@ describe('E2E: Complete User Flow', () => {
 
     it('should register User B', async () => {
       const identity = buildIdentity('userb', 'test.com');
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send({
           email: userB.email || identity.email,
@@ -124,7 +124,7 @@ describe('E2E: Complete User Flow', () => {
 
   describe('Step 3: Room Creation', () => {
     it('User A should create a room via API', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/rooms')
         .set('Authorization', `Bearer ${userA.token}`);
 
@@ -169,6 +169,67 @@ describe('E2E: Complete User Flow', () => {
       expect(roomData).toHaveProperty('members');
       expect(roomData.members).toContain(userA.username);
     });
+
+    it('User A should persist wrapped room key material for reconnects', async () => {
+      expect(userA.socket).toBeTruthy();
+
+      userA.socket.emit('sync-room-key', {
+        roomId,
+        wrappedRoomKey: 'mock-wrapped-room-key-owner',
+        wrappedRoomKeyIv: 'mock-wrapped-room-iv-owner',
+        keySenderUsername: userA.username,
+      });
+
+      const roomDataPromise = waitForEvent(userA.socket, 'room-data');
+      userA.socket.emit('join-room', { roomId });
+
+      const roomData = await roomDataPromise;
+      expect(roomData).toHaveProperty('wrappedRoomKey', 'mock-wrapped-room-key-owner');
+      expect(roomData).toHaveProperty('wrappedRoomKeyIv', 'mock-wrapped-room-iv-owner');
+      expect(roomData).toHaveProperty('keySenderUsername', userA.username);
+    });
+
+    it('User B should register with socket and public key', async () => {
+      expect(userB.socket).toBeTruthy();
+      expect(userB.username).toBeTruthy();
+
+      const registerPromise = waitForEvent(userB.socket, 'registered');
+
+      userB.socket.emit('register', {
+        username: userB.username,
+        publicKey: `mock-public-key-b-${Date.now()}`,
+      });
+
+      const result = await registerPromise;
+      expect(result).toHaveProperty('username', userB.username);
+    });
+
+    it('User B should receive wrapped room key on approval', async () => {
+      expect(userA.socket).toBeTruthy();
+      expect(userB.socket).toBeTruthy();
+
+      const joinRequestPromise = waitForEvent(userA.socket, 'join-request');
+      const joinApprovedPromise = waitForEvent(userB.socket, 'join-approved');
+
+      userB.socket.emit('request-join', { roomCode });
+
+      const joinRequest = await joinRequestPromise;
+      expect(joinRequest).toHaveProperty('username', userB.username);
+
+      userA.socket.emit('approve-join', {
+        requestId: joinRequest.requestId,
+        wrappedRoomKey: 'mock-wrapped-room-key-member',
+        wrappedRoomKeyIv: 'mock-wrapped-room-iv-member',
+        keySenderUsername: userA.username,
+      });
+
+      const joinApproved = await joinApprovedPromise;
+      expect(joinApproved).toHaveProperty('roomId', roomId);
+      expect(joinApproved).toHaveProperty('roomCode', roomCode);
+      expect(joinApproved).toHaveProperty('wrappedRoomKey', 'mock-wrapped-room-key-member');
+      expect(joinApproved).toHaveProperty('wrappedRoomKeyIv', 'mock-wrapped-room-iv-member');
+      expect(joinApproved).toHaveProperty('keySenderUsername', userA.username);
+    });
   });
 
   describe('Step 5: Message Exchange', () => {
@@ -193,7 +254,7 @@ describe('E2E: Complete User Flow', () => {
 
   describe('Step 6: Cleanup', () => {
     it('User A should be able to delete the room', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .delete(`/api/rooms/${roomId}`)
         .set('Authorization', `Bearer ${userA.token}`);
 
@@ -204,7 +265,7 @@ describe('E2E: Complete User Flow', () => {
 
 describe('E2E: Security Flow', () => {
   it('should not allow unauthenticated room creation', async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/rooms');
 
     expect(res.status).toBe(401);
@@ -231,7 +292,7 @@ describe('E2E: Security Flow', () => {
   });
 
   it('should not allow access to other users rooms', async () => {
-    const ownerRes = await request(API_URL)
+    const ownerRes = await request(getApiUrl())
       .post('/api/auth/register')
       .send({
         ...buildIdentity('sectest', 'test.com'),
@@ -240,13 +301,13 @@ describe('E2E: Security Flow', () => {
 
     expect(ownerRes.status).toBe(201);
 
-    const roomRes = await request(API_URL)
+    const roomRes = await request(getApiUrl())
       .post('/api/rooms')
       .set('Authorization', `Bearer ${ownerRes.body.accessToken}`);
 
     expect(roomRes.status).toBe(201);
 
-    const otherRes = await request(API_URL)
+    const otherRes = await request(getApiUrl())
       .post('/api/auth/register')
       .send({
         ...buildIdentity('other', 'test.com'),
@@ -255,7 +316,7 @@ describe('E2E: Security Flow', () => {
 
     expect(otherRes.status).toBe(201);
 
-    const accessRes = await request(API_URL)
+    const accessRes = await request(getApiUrl())
       .get(`/api/rooms/${roomRes.body.room.roomId}/messages`)
       .set('Authorization', `Bearer ${otherRes.body.accessToken}`);
 
@@ -268,7 +329,7 @@ describe('E2E: File Upload with Encryption', () => {
   let roomId = '';
 
   beforeAll(async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/auth/register')
       .send({
         ...buildIdentity('filetest', 'test.com'),
@@ -278,7 +339,7 @@ describe('E2E: File Upload with Encryption', () => {
     expect(res.status).toBe(201);
     authToken = res.body.accessToken;
 
-    const roomRes = await request(API_URL)
+    const roomRes = await request(getApiUrl())
       .post('/api/rooms')
       .set('Authorization', `Bearer ${authToken}`);
 
@@ -288,14 +349,15 @@ describe('E2E: File Upload with Encryption', () => {
 
   it('should upload an encrypted file', async () => {
     const mockEncryptedContent = Buffer.from(`encrypted-file-content-${Date.now()}`);
+    const encryptedMetadata = JSON.stringify({ encryptedData: 'mock', iv: 'mock' });
 
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/files/upload')
       .set('Authorization', `Bearer ${authToken}`)
       .field('roomId', roomId)
       .field('encrypted', 'true')
       .field('iv', 'mock-iv-base64-string')
-      .field('metadata', JSON.stringify({ encryptedData: 'mock', iv: 'mock' }))
+      .field('metadata', encryptedMetadata)
       .field('originalName', 'secret-document.pdf')
       .field('originalType', 'application/pdf')
       .field('originalSize', '12345')
@@ -305,10 +367,14 @@ describe('E2E: File Upload with Encryption', () => {
     expect(res.body).toHaveProperty('attachment');
     expect(res.body.attachment.encrypted).toBe(true);
     expect(res.body.attachment.iv).toBeDefined();
+    expect(res.body.attachment.filename).toBe('encrypted.enc');
+    expect(res.body.attachment.mimetype).toBe('application/octet-stream');
+    expect(res.body.attachment.size).toBe(mockEncryptedContent.length);
+    expect(res.body.attachment.metadata).toBe(encryptedMetadata);
   });
 
   it('should retrieve encrypted file metadata', async () => {
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .get(`/api/files/room/${roomId}`)
       .set('Authorization', `Bearer ${authToken}`);
 
@@ -319,5 +385,7 @@ describe('E2E: File Upload with Encryption', () => {
     const encryptedFiles = res.body.attachments.filter((attachment) => attachment.encrypted);
     expect(encryptedFiles.length).toBeGreaterThan(0);
     expect(encryptedFiles[0].iv).toBeDefined();
+    expect(encryptedFiles[0].filename).toBe('encrypted.enc');
+    expect(encryptedFiles[0].mimetype).toBe('application/octet-stream');
   });
 });

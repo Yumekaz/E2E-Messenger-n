@@ -40,7 +40,16 @@ function FileUpload({ roomId, onFileUploaded, disabled = false, encryptFile }: E
       setProgress(100);
 
       // Notify parent
-      onFileUploaded(result.attachment);
+      onFileUploaded(
+        uploadData
+          ? {
+              ...result.attachment,
+              filename: file.name,
+              mimetype: file.type || 'application/octet-stream',
+              size: file.size,
+            }
+          : result.attachment
+      );
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Upload failed');
     } finally {

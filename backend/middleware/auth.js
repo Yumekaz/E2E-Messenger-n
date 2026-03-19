@@ -6,6 +6,34 @@
 const authService = require('../services/authService');
 const { AuthenticationError } = require('../utils/errors');
 
+function forwardAuthError(req, next, error) {
+  const contentType = req.headers['content-type'] || '';
+  const isMultipart = contentType.includes('multipart/form-data');
+
+  if (!isMultipart || req.readableEnded || req.complete) {
+    next(error);
+    return;
+  }
+
+  let settled = false;
+  const finalize = () => {
+    if (settled) {
+      return;
+    }
+
+    settled = true;
+    req.off('end', finalize);
+    req.off('close', finalize);
+    req.off('error', finalize);
+    next(error);
+  };
+
+  req.on('end', finalize);
+  req.on('close', finalize);
+  req.on('error', finalize);
+  req.resume();
+}
+
 /**
  * Authenticate access token from Authorization header
  */
@@ -14,7 +42,8 @@ function authenticateToken(req, res, next) {
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
   if (!token) {
-    return next(new AuthenticationError('Access token required'));
+    forwardAuthError(req, next, new AuthenticationError('Access token required'));
+    return;
   }
 
   try {
@@ -33,7 +62,7 @@ function authenticateToken(req, res, next) {
 
     next();
   } catch (error) {
-    next(new AuthenticationError('Invalid or expired token'));
+    forwardAuthError(req, next, new AuthenticationError('Invalid or expired token'));
   }
 }
 

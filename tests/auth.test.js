@@ -4,7 +4,7 @@
  */
 
 const request = require('supertest');
-const { API_URL } = require('./helpers/api');
+const { getApiUrl } = require('./helpers/api');
 const { buildIdentity } = require('./helpers/identity');
 
 describe('Authentication API', () => {
@@ -15,7 +15,7 @@ describe('Authentication API', () => {
   beforeAll(async () => {
     seededUser = buildIdentity('authseed');
 
-    const res = await request(API_URL)
+    const res = await request(getApiUrl())
       .post('/api/auth/register')
       .send(seededUser)
       .expect('Content-Type', /json/);
@@ -30,7 +30,7 @@ describe('Authentication API', () => {
     it('should register a new user', async () => {
       const testUser = buildIdentity('register');
 
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send(testUser)
         .expect('Content-Type', /json/);
@@ -44,7 +44,7 @@ describe('Authentication API', () => {
     });
 
     it('should reject registration with invalid email', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send({
           email: 'invalid-email',
@@ -57,7 +57,7 @@ describe('Authentication API', () => {
     });
 
     it('should reject registration with short password', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send({
           email: 'test@example.com',
@@ -70,7 +70,7 @@ describe('Authentication API', () => {
     });
 
     it('should reject registration with invalid username', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/register')
         .send({
           email: 'test@example.com',
@@ -85,7 +85,7 @@ describe('Authentication API', () => {
 
   describe('POST /api/auth/login', () => {
     it('should login with valid credentials', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/login')
         .send({
           email: seededUser.email,
@@ -100,7 +100,7 @@ describe('Authentication API', () => {
     });
 
     it('should reject login with wrong password', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/login')
         .send({
           email: seededUser.email,
@@ -112,7 +112,7 @@ describe('Authentication API', () => {
     });
 
     it('should reject login with non-existent email', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/login')
         .send({
           email: 'nonexistent@example.com',
@@ -126,7 +126,7 @@ describe('Authentication API', () => {
 
   describe('POST /api/auth/refresh', () => {
     it('should refresh access token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/refresh')
         .send({ refreshToken })
         .expect('Content-Type', /json/);
@@ -137,7 +137,7 @@ describe('Authentication API', () => {
     });
 
     it('should reject invalid refresh token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .post('/api/auth/refresh')
         .send({ refreshToken: 'invalid-token' });
 
@@ -147,7 +147,7 @@ describe('Authentication API', () => {
 
   describe('GET /api/auth/me', () => {
     it('should return current user profile', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/auth/me')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect('Content-Type', /json/);
@@ -159,14 +159,14 @@ describe('Authentication API', () => {
     });
 
     it('should reject request without token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/auth/me');
 
       expect(res.status).toBe(401);
     });
 
     it('should reject request with invalid token', async () => {
-      const res = await request(API_URL)
+      const res = await request(getApiUrl())
         .get('/api/auth/me')
         .set('Authorization', 'Bearer invalid-token');
 
@@ -180,7 +180,7 @@ describe('Rate Limiting', () => {
     const promises = [];
     for (let i = 0; i < 10; i++) {
       promises.push(
-        request(API_URL)
+        request(getApiUrl())
           .post('/api/auth/login')
           .send({
             email: 'test@example.com',
