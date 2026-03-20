@@ -1,4 +1,4 @@
-.room-page {
+.page.room-page {
   padding: 0;
 }
 
@@ -19,7 +19,7 @@
   display: flex;
   gap: 16px;
   justify-content: space-between;
-  padding: 86px 24px 18px;
+  padding: 74px 24px 18px;
   position: sticky;
   top: 0;
   z-index: 20;
@@ -159,6 +159,12 @@
   scroll-padding-top: 24px;
 }
 
+.messages-container--empty {
+  display: grid;
+  gap: 18px;
+  grid-template-rows: auto minmax(220px, 1fr);
+}
+
 .encryption-banner,
 .empty-room-state {
   backdrop-filter: blur(10px);
@@ -183,10 +189,12 @@
 }
 
 .empty-room-state {
+  align-content: center;
   display: grid;
   gap: 8px;
   justify-items: start;
   margin-top: 4px;
+  min-height: 100%;
   padding: 24px;
 }
 
@@ -326,6 +334,42 @@
   display: grid;
   gap: 18px;
   padding: 0 24px 20px;
+}
+
+.room-info-overlay {
+  display: contents;
+}
+
+.room-info-overlay--sheet {
+  align-items: end;
+  background: rgba(31, 39, 35, 0.18);
+  display: flex;
+  inset: 0;
+  padding-top: 92px;
+  position: fixed;
+  z-index: 103;
+}
+
+.room-info-panel--sheet {
+  background: rgba(255, 252, 248, 0.96);
+  border: 1px solid rgba(54, 67, 61, 0.08);
+  border-bottom: none;
+  border-radius: 28px 28px 0 0;
+  box-shadow: var(--shadow-lg);
+  margin-top: auto;
+  max-height: calc(100vh - 92px);
+  overflow-y: auto;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  width: 100%;
+}
+
+.room-info-panel--sheet .info-panel-header {
+  background: rgba(255, 252, 248, 0.96);
+  margin: 0 -16px;
+  padding: 18px 16px 12px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .info-panel-header {
@@ -574,7 +618,7 @@
   background: rgba(31, 39, 35, 0.16);
   inset: 0;
   position: fixed;
-  z-index: 40;
+  z-index: 104;
 }
 
 .members-panel {
@@ -752,7 +796,7 @@
   .room-header {
     align-items: start;
     flex-direction: column;
-    padding: 108px 16px 16px;
+    padding: 96px 16px 16px;
   }
 
   .header-actions {
@@ -761,8 +805,12 @@
 
   .room-status-strip,
   .room-content,
-  .room-info-panel,
   .message-input-form {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .room-info-panel {
     padding-left: 16px;
     padding-right: 16px;
   }
@@ -777,6 +825,10 @@
 
   .messages-container {
     padding-bottom: 212px;
+  }
+
+  .messages-container--empty {
+    grid-template-rows: auto minmax(180px, 1fr);
   }
 
   .composer-surface {

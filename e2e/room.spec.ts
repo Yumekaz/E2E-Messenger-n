@@ -71,7 +71,7 @@ test.describe('Room & Messaging Flow', () => {
 
     await expect(page.locator('.members-panel')).toBeVisible({ timeout: 5000 });
     await expect(page.getByText(user.username)).toBeVisible();
-    await expect(page.getByText('You')).toBeVisible();
+    await expect(page.locator('.members-panel .you-badge')).toHaveText('You');
   });
 
   test('should confirm before leaving room as owner', async ({ page }) => {

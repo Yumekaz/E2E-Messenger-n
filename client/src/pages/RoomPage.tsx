@@ -249,6 +249,26 @@ function RoomPage({
     setShowLeaveConfirm(true);
   }
 
+  function handleToggleRoomInfo(): void {
+    setShowRoomInfo((prev) => {
+      const next = !prev;
+      if (next) {
+        setShowMembers(false);
+      }
+      return next;
+    });
+  }
+
+  function handleToggleMembers(): void {
+    setShowMembers((prev) => {
+      const next = !prev;
+      if (next) {
+        setShowRoomInfo(false);
+      }
+      return next;
+    });
+  }
+
   function handleConfirmLeave(): void {
     setShowLeaveConfirm(false);
     void onLeave();
@@ -344,6 +364,8 @@ function RoomPage({
 
   useEffect(() => {
     resetRoomViewState();
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    messagesContainerRef.current?.scrollTo({ top: 0, behavior: 'auto' });
     socket.emit('join-room', { roomId });
   }, [roomId]);
 
@@ -585,6 +607,10 @@ function RoomPage({
     serverUrl ||
     networkCandidates.find((candidate) => candidate.recommended)?.url ||
     window.location.origin;
+  const hasMessages = messages.length > 0;
+  const roomInfoAsSheet =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 820px)').matches;
 
   return (
     <div className="page room-page">
@@ -616,7 +642,7 @@ function RoomPage({
           <div className="header-actions">
             <button
               className="btn btn-icon"
-              onClick={() => setShowRoomInfo(!showRoomInfo)}
+              onClick={handleToggleRoomInfo}
               title="Room Info"
               aria-label="Room Info"
             >
@@ -628,7 +654,7 @@ function RoomPage({
             </button>
             <button
               className="btn btn-icon"
-              onClick={() => setShowMembers(!showMembers)}
+              onClick={handleToggleMembers}
               title="Members"
               aria-label="Members"
             >
@@ -665,82 +691,90 @@ function RoomPage({
         </div>
 
         {showRoomInfo && (
-          <div className="room-info-panel">
-            <div className="info-panel-header">
-              <div>
-                <p className="info-panel-eyebrow">Session details</p>
-                <h4>How this room works</h4>
-              </div>
-              <button className="close-btn" onClick={() => setShowRoomInfo(false)} aria-label="Close room details">×</button>
-            </div>
-            <div className="info-panel-content">
-              <div className="info-row">
-                <span className="info-label">Room code</span>
-                <div className="code-display">
-                  <span className="code-value">{roomCode}</span>
-                  <button className="copy-btn" onClick={copyRoomCode} type="button">
-                    {copiedRoomCode ? 'Copied' : 'Copy code'}
-                  </button>
+          <div
+            className={`room-info-overlay${roomInfoAsSheet ? ' room-info-overlay--sheet' : ''}`}
+            onClick={() => setShowRoomInfo(false)}
+          >
+            <div
+              className={`room-info-panel${roomInfoAsSheet ? ' room-info-panel--sheet' : ''}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="info-panel-header">
+                <div>
+                  <p className="info-panel-eyebrow">Session details</p>
+                  <h4>How this room works</h4>
                 </div>
+                <button className="close-btn" onClick={() => setShowRoomInfo(false)} aria-label="Close room details">×</button>
               </div>
-              <div className="info-row room-qr-row">
-                <span className="info-label">Mobile join</span>
-                <div className="room-qr-card">
-                  <QRCodeCanvas
-                    value={`${preferredJoinUrl}/?room=${roomCode}`}
-                    size={156}
-                    level={'H'}
-                    marginSize={2}
-                  />
-                </div>
-                <small className="room-footnote">
-                  Scan from a phone on the same Wi-Fi, hotspot, or LAN. The join link stays on your local network.
-                </small>
-              </div>
-              {networkCandidates.length > 0 && (
-                <div className="info-row room-network-row">
-                  <div className="info-label">Local addresses</div>
-                  <button className="copy-btn" type="button" onClick={() => void loadNetworkInfo()}>
-                    Refresh
-                  </button>
-                  <div className="room-network-list">
-                    {networkCandidates.map((candidate) => (
-                      <div key={`${candidate.name}-${candidate.ip}`} className="room-network-card">
-                        <div className="room-network-card__meta">
-                          <span className="network-candidate-name">{candidate.name}</span>
-                          {candidate.recommended && <span className="network-candidate-badge">Recommended</span>}
-                        </div>
-                        <code>{candidate.url}</code>
-                      </div>
-                    ))}
+              <div className="info-panel-content">
+                <div className="info-row">
+                  <span className="info-label">Room code</span>
+                  <div className="code-display">
+                    <span className="code-value">{roomCode}</span>
+                    <button className="copy-btn" onClick={copyRoomCode} type="button">
+                      {copiedRoomCode ? 'Copied' : 'Copy code'}
+                    </button>
                   </div>
                 </div>
-              )}
-              <div className="room-summary-grid">
-                <div className="room-summary-card">
-                  <span className="room-summary-label">Transport</span>
-                  <span className="room-summary-value">Same Wi-Fi, hotspot, or LAN</span>
+                <div className="info-row room-qr-row">
+                  <span className="info-label">Mobile join</span>
+                  <div className="room-qr-card">
+                    <QRCodeCanvas
+                      value={`${preferredJoinUrl}/?room=${roomCode}`}
+                      size={156}
+                      level={'H'}
+                      marginSize={2}
+                    />
+                  </div>
+                  <small className="room-footnote">
+                    Scan from a phone on the same Wi-Fi, hotspot, or LAN. The join link stays on your local network.
+                  </small>
                 </div>
-                <div className="room-summary-card">
-                  <span className="room-summary-label">Access</span>
-                  <span className="room-summary-value">Owner approval</span>
+                {networkCandidates.length > 0 && (
+                  <div className="info-row room-network-row">
+                    <div className="info-label">Local addresses</div>
+                    <button className="copy-btn" type="button" onClick={() => void loadNetworkInfo()}>
+                      Refresh
+                    </button>
+                    <div className="room-network-list">
+                      {networkCandidates.map((candidate) => (
+                        <div key={`${candidate.name}-${candidate.ip}`} className="room-network-card">
+                          <div className="room-network-card__meta">
+                            <span className="network-candidate-name">{candidate.name}</span>
+                            {candidate.recommended && <span className="network-candidate-badge">Recommended</span>}
+                          </div>
+                          <code>{candidate.url}</code>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="room-summary-grid">
+                  <div className="room-summary-card">
+                    <span className="room-summary-label">Transport</span>
+                    <span className="room-summary-value">Same Wi-Fi, hotspot, or LAN</span>
+                  </div>
+                  <div className="room-summary-card">
+                    <span className="room-summary-label">Access</span>
+                    <span className="room-summary-value">Owner approval</span>
+                  </div>
                 </div>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Your key fingerprint</span>
-                <code className="fingerprint">{fingerprint}</code>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Encryption</span>
-                <span className="encryption-type">AES-256-GCM</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Key exchange</span>
-                <span className="encryption-type">ECDH P-256</span>
-              </div>
-              <div className="security-note">
-                <span className="note-icon">ℹ</span>
-                The server relays encrypted payloads and room state. It cannot read message contents, and the owner still decides who gets in.
+                <div className="info-row">
+                  <span className="info-label">Your key fingerprint</span>
+                  <code className="fingerprint">{fingerprint}</code>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">Encryption</span>
+                  <span className="encryption-type">AES-256-GCM</span>
+                </div>
+                <div className="info-row">
+                  <span className="info-label">Key exchange</span>
+                  <span className="encryption-type">ECDH P-256</span>
+                </div>
+                <div className="security-note">
+                  <span className="note-icon">ℹ</span>
+                  The server relays encrypted payloads and room state. It cannot read message contents, and the owner still decides who gets in.
+                </div>
               </div>
             </div>
           </div>
@@ -748,7 +782,7 @@ function RoomPage({
 
         <div className="room-content">
           <div
-            className="messages-container"
+            className={`messages-container${hasMessages ? '' : ' messages-container--empty'}`}
             ref={messagesContainerRef}
             onScroll={handleScroll}
             onTouchStart={handleTouchStart}
@@ -762,6 +796,16 @@ function RoomPage({
               </svg>
               <span>Messages and files are end-to-end encrypted</span>
             </div>
+
+            {!hasMessages && (
+              <div className="empty-room-state">
+                <h4>Your secure chat is ready</h4>
+                <p>
+                  Start the conversation here, or share the room code so someone on the same
+                  local network can request access.
+                </p>
+              </div>
+            )}
 
             {messages.map((msg, index) => (
               <div

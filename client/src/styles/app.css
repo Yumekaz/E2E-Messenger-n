@@ -212,8 +212,9 @@ code {
 
 .brand-glyph {
   display: block;
-  height: 100%;
-  width: 100%;
+  flex: 0 0 auto;
+  height: 1em;
+  width: 1em;
 }
 
 .brand-glyph__frame {
